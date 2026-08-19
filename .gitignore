@@ -1,0 +1,38 @@
+.env
+.env.*
+!.env.example
+
+# Go
+*.exe
+*.test
+*.out
+coverage.*
+bin/
+
+# Web
+web/node_modules/
+web/dist/
+
+# Docker and local runtime
+.docker/
+*.log
+
+# Local agent/session metadata
+.emma/
+.pi/
+.pi-subagents/
+
+
+# Secrets and certificates
+*.pem
+*.key
+*.crt
+*.p12
+secrets/
+nvenv
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,164 @@
+name: new-vision
+
+services:
+  postgres:
+    image: postgres:17.6-alpine3.22
+    environment:
+      POSTGRES_DB: ${NV_POSTGRES_DB}
+      POSTGRES_USER: ${NV_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${NV_POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks: [node]
+
+  redis:
+    image: redis:8.2.1-alpine3.22
+    environment:
+      NV_REDIS_PASSWORD: ${NV_REDIS_PASSWORD}
+      NV_REDIS_NODEAPP_PASSWORD: ${NV_REDIS_NODEAPP_PASSWORD}
+      NV_REDIS_ACCESS_PASSWORD: ${NV_REDIS_ACCESS_PASSWORD}
+    command: ["sh", "-c", 'exec redis-server --save "" --appendonly yes --appendfsync everysec --user default off --user admin on ">$$NV_REDIS_PASSWORD" ~* +@all --user nodeapp on ">$$NV_REDIS_NODEAPP_PASSWORD" ~nv:nodeapp:v1:* +ping +hgetall +hset +del +set +multi +exec +sadd +smembers -flushdb -flushall --user access on ">$$NV_REDIS_ACCESS_PASSWORD" ~nv:access:v1:* +ping +get +set +del +hget +hgetall +hset +hdel +incr +xadd +xrange +xtrim +multi +exec +discard +watch +unwatch +sadd +smembers +srem -flushdb -flushall']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --user admin -a \"$$NV_REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks: [node]
+
+  node-app:
+    image: new-vision/node-app
+    build:
+      context: .
+      dockerfile: deploy/node-app/Dockerfile
+      args:
+        GOPROXY: ${NV_GOPROXY:-https://proxy.golang.org,direct}
+    environment:
+      NV_HTTP_ADDR: ${NV_HTTP_ADDR}
+      NV_LOG_LEVEL: ${NV_LOG_LEVEL}
+      NV_SHUTDOWN_TIMEOUT: ${NV_SHUTDOWN_TIMEOUT}
+      NV_HEALTH_TIMEOUT: ${NV_HEALTH_TIMEOUT}
+      NV_POSTGRES_HOST: postgres
+      NV_POSTGRES_PORT: 5432
+      NV_POSTGRES_DB: ${NV_POSTGRES_DB}
+      NV_POSTGRES_USER: ${NV_POSTGRES_USER}
+      NV_POSTGRES_PASSWORD: ${NV_POSTGRES_PASSWORD}
+      NV_POSTGRES_SSLMODE: ${NV_POSTGRES_SSLMODE}
+      NV_REDIS_HOST: redis
+      NV_REDIS_PORT: 6379
+      NV_REDIS_USERNAME: nodeapp
+      NV_REDIS_PASSWORD: ${NV_REDIS_NODEAPP_PASSWORD}
+      NV_REDIS_DB: ${NV_REDIS_DB}
+      NV_ACCESS_RPC_URL: ${NV_ACCESS_RPC_URL}
+      NV_ACCESS_RPC_TIMEOUT: ${NV_ACCESS_RPC_TIMEOUT}
+      NV_ACCESS_POLL_INTERVAL: ${NV_ACCESS_POLL_INTERVAL}
+      NV_ACCESS_INSTANCE_ID: ${NV_ACCESS_INSTANCE_ID}
+    depends_on:
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+    expose: ["8080"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    networks: [node]
+
+  node-access:
+    image: new-vision/node-access
+    build:
+      context: .
+      dockerfile: deploy/node-access/Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      NV_ACCESS_INSTANCE_ID: ${NV_ACCESS_INSTANCE_ID}
+      NV_KEEPALIVE_TIMEOUT: ${NV_KEEPALIVE_TIMEOUT}
+      NV_SIP_REALM: ${NV_SIP_REALM}
+      NV_REDIS_HOST: redis
+      NV_REDIS_PORT: 6379
+      NV_REDIS_USERNAME: access
+      NV_REDIS_PASSWORD: ${NV_REDIS_ACCESS_PASSWORD}
+    ports:
+      - "${NV_SIP_PORT}:5060/udp"
+    expose: ["8090"]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8090/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks: [node]
+
+  node-web:
+    image: new-vision/node-web
+    build:
+      context: .
+      dockerfile: deploy/node-web/Dockerfile
+    expose: ["8080"]
+    restart: unless-stopped
+    networks: [node]
+
+  reverse-proxy:
+    image: new-vision/reverse-proxy
+    build:
+      context: .
+      dockerfile: deploy/nginx/Dockerfile
+    ports:
+      - "${NV_HTTP_PORT}:8080"
+    depends_on:
+      node-app:
+        condition: service_started
+      node-web:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    networks: [node]
+
+  zlmediakit:
+    image: zlmediakit/zlmediakit:master@sha256:2bb6a49f61944bc2437da5d670581837cdf41cf1ed045b80f1590b82499c4b98
+    expose: ["80"]
+    restart: unless-stopped
+    networks: [node]
+
+  migrate:
+    image: migrate/migrate:v4.18.3
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command: ["up"]
+    environment:
+      DATABASE_URL: postgres://${NV_POSTGRES_USER}:${NV_POSTGRES_PASSWORD}@postgres:5432/${NV_POSTGRES_DB}?sslmode=disable
+    volumes:
+      - ./migrations:/migrations:ro
+      - ./deploy/migrate/entrypoint.sh:/entrypoint.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [node]
+
+volumes:
+  postgres-data:
+    name: new-vision-postgres-data
+  redis-data:
+    name: new-vision-redis-data
+
+networks:
+  node:
+    name: new-vision-node
+    driver: bridge
