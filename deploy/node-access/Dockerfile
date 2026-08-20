@@ -17,7 +17,7 @@ RUN git clone --branch "${KAMAILIO_VERSION}" --depth 1 \
 COPY deploy/kamailio/modules/gb28181 /usr/src/kamailio/src/modules/gb28181
 WORKDIR /usr/src/kamailio
 RUN make cfg prefix=/opt/kamailio \
-      include_modules="auth pv registrar sl tm usrloc xhttp gb28181" \
+      include_modules="auth pv registrar sl tm usrloc xhttp xlog gb28181" \
     && make -j"$(nproc)" all \
     && make install
 

@@ -127,6 +127,13 @@ func (s *SIPSimulator) uri(device Device) string {
 	return fmt.Sprintf("sip:%s@%s:%d", device.SIPRealm, host, s.port)
 }
 
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
 type sipResponse struct {
 	statusLine string
 	headers    map[string]string
@@ -154,23 +161,44 @@ func (r *sipResponse) Header(name string) string {
 }
 
 func (s *SIPSimulator) exchange(build func(source string) string) (sipResponse, error) {
-	conn, err := net.DialTimeout("udp", net.JoinHostPort(s.host, strconv.Itoa(s.port)), s.timeout)
+	raddr, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(s.host, strconv.Itoa(s.port)))
 	if err != nil {
-		return sipResponse{}, fmt.Errorf("dial access sip endpoint: %w", err)
+		return sipResponse{}, fmt.Errorf("resolve access sip endpoint: %w", err)
+	}
+	sourceIP, err := probeSourceIP(raddr)
+	if err != nil {
+		return sipResponse{}, fmt.Errorf("probe source ip: %w", err)
+	}
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: sourceIP})
+	if err != nil {
+		return sipResponse{}, fmt.Errorf("listen udp: %w", err)
 	}
 	defer conn.Close()
-	deadline := time.Now().Add(s.timeout)
-	_ = conn.SetDeadline(deadline)
+	_ = conn.SetReadDeadline(time.Now().Add(s.timeout))
 	source := conn.LocalAddr().String()
-	if _, err = conn.Write([]byte(build(source))); err != nil {
+	packet := []byte(build(source))
+	if _, err = conn.WriteToUDP(packet, raddr); err != nil {
 		return sipResponse{}, fmt.Errorf("send sip packet: %w", err)
 	}
 	buf := make([]byte, 65536)
-	n, err := conn.Read(buf)
+	n, _, err := conn.ReadFromUDP(buf)
 	if err != nil {
-		return sipResponse{}, fmt.Errorf("read sip response: %w", err)
+		return sipResponse{}, fmt.Errorf("read sip response (sent to %s from %s): %w; packet=%q", raddr, source, err, truncate(string(packet), 400))
 	}
 	return parseSIPResponse(string(buf[:n]))
+}
+
+// probeSourceIP dials the target without sending data to learn the local IP
+// the kernel would use to reach it. Binding the SIP socket to that concrete
+// address makes Via/Contact carry a routable sent-by instead of 0.0.0.0,
+// which the access layer rejects (crash) on the authenticated retry.
+func probeSourceIP(raddr *net.UDPAddr) (net.IP, error) {
+	probe, err := net.DialUDP("udp4", nil, raddr)
+	if err != nil {
+		return nil, err
+	}
+	defer probe.Close()
+	return probe.LocalAddr().(*net.UDPAddr).IP, nil
 }
 
 func resolveHost(host string) (string, error) {

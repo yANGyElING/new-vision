@@ -1549,18 +1549,18 @@ static int emit_registration_event(const char *device_id, const char *state,
     long long current, next;
     int attempt, committed;
 
-    payload = json_pack("{s:s,s:s,s:s}", "state", state, "reason", reason,
-            "remote_address", remote_address ? remote_address : "");
-    if(!payload
-            || (expires_at && *expires_at
-                && json_object_set_new(payload, "expires_at",
-                    json_string(expires_at)) < 0)
-            || json_object_set_new(payload, "last_seen", json_string(last_seen)) < 0) {
-        if(payload)
-            json_decref(payload);
-        return -1;
-    }
     for(attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
+        payload = json_pack("{s:s,s:s,s:s}", "state", state, "reason", reason,
+                "remote_address", remote_address ? remote_address : "");
+        if(!payload
+                || (expires_at && *expires_at
+                    && json_object_set_new(payload, "expires_at",
+                        json_string(expires_at)) < 0)
+                || json_object_set_new(payload, "last_seen", json_string(last_seen)) < 0) {
+            if(payload)
+                json_decref(payload);
+            return -1;
+        }
         reply = redisCommand(redis_ctx, "WATCH %s", KEY_EVENT_SEQUENCE);
         if(!reply_status_ok(reply)) {
             if(reply)
@@ -1577,17 +1577,28 @@ static int emit_registration_event(const char *device_id, const char *state,
         }
         next = current + 1;
         snprintf(event_id, sizeof(event_id), "%s:%lld", access_instance_id, next);
-        event = json_pack("{s:s,s:I,s:s,s:s,s:s,s:s,s:O}", "event_id",
-                event_id, (json_int_t)next, "access_instance_id",
-                access_instance_id, "session_epoch", session_epoch,
+        event = json_pack("{s:s,s:I,s:s,s:s,s:s,s:s,s:s}", "event_id",
+                event_id, "sequence", (json_int_t)next,
+                "access_instance_id", access_instance_id,
+                "session_epoch", session_epoch,
                 "type", "registration_changed", "occurred_at", last_seen,
-                "device_access_id", device_id, "payload", payload);
+                "device_access_id", device_id);
         if(!event) {
             unwatch();
             json_decref(payload);
             return -1;
         }
-        encoded = json_dumps(event, JSON_COMPACT | JSON_ENSURE_ASCII);
+        /* json_object_set_new steals the payload reference: afterwards the
+         * event owns payload and the local pointer must not be decref'd
+         * again (treat as NULL). */
+        if(json_object_set_new(event, "payload", payload) < 0) {
+            unwatch();
+            json_decref(event);
+            json_decref(payload);
+            return -1;
+        }
+        payload = NULL;
+        encoded = json_dumps(event, JSON_COMPACT);
         json_decref(event);
         if(!encoded) {
             unwatch();
