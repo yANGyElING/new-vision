@@ -322,7 +322,7 @@ func (s *SIPSimulator) registerPacket(device Device, expires int, transaction si
 	builder.WriteString("To: " + to + "\r\n")
 	builder.WriteString("Call-ID: " + transaction.callID + "\r\n")
 	fmt.Fprintf(&builder, "CSeq: %d REGISTER\r\n", transaction.cseq)
-	builder.WriteString("Contact: <" + source + ">\r\n")
+	builder.WriteString("Contact: <sip:" + device.SIPUsername + "@" + source + ">\r\n")
 	builder.WriteString("Max-Forwards: 70\r\n")
 	builder.WriteString("Expires: " + strconv.Itoa(expires) + "\r\n")
 	if authorization != "" {
