@@ -206,7 +206,7 @@ func (r *PostgresDeviceRepository) List(ctx context.Context) ([]Device, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var devices []Device
+	devices := make([]Device, 0)
 	for rows.Next() {
 		d, err := scanDevice(rows)
 		if err != nil {
