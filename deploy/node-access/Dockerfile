@@ -29,7 +29,9 @@ RUN apt-get update \
         libssl3 libxml2 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 kamailio \
-    && useradd --system --uid 10001 --gid 10001 --no-create-home kamailio
+    && useradd --system --uid 10001 --gid 10001 --no-create-home kamailio \
+    && mkdir -p /var/run/kamailio \
+    && chown kamailio:kamailio /var/run/kamailio
 
 COPY --from=build /opt/kamailio /opt/kamailio
 COPY deploy/kamailio/kamailio.cfg /etc/kamailio/kamailio.cfg
