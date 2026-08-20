@@ -30,6 +30,7 @@ web/dist/
 *.p12
 secrets/
 nvenv
+.deploy-env
 
 # Editors and OS
 .idea/

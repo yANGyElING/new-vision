@@ -31,6 +31,10 @@
 
 set -euo pipefail
 
+# load local deploy credentials (gitignored; password never committed)
+_DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$_DEPLOY_DIR/.deploy-env" ] && . "$_DEPLOY_DIR/.deploy-env"
+
 SSH_HOST="${NV_SSH_HOST:-106.52.72.48}"
 SSH_PORT="${NV_SSH_PORT:-22}"
 SSH_USER="${NV_SSH_USER:-root}"
@@ -66,7 +70,7 @@ ssh_run() {
 echo "== deploy $GIT_BRANCH -> $SSH_USER@$SSH_HOST:$REMOTE_DIR =="
 echo "   (one SSH connection; node-access rebuilds Kamailio, this can take a while)"
 
-if ssh_run "REMOTE_DIR='$REMOTE_DIR' GIT_REPO='$GIT_REPO' GIT_BRANCH='$GIT_BRANCH' ENV_FILE='$ENV_FILE' GOPROXY='$GOPROXY' TIMEOUT='$TIMEOUT' bash -s" <<'REMOTE_EOF'
+if ssh_run "REMOTE_DIR='$REMOTE_DIR' GIT_REPO='$NV_GIT_REPO' GIT_BRANCH='$GIT_BRANCH' ENV_FILE='$ENV_FILE' GOPROXY='$GOPROXY' TIMEOUT='$TIMEOUT' bash -s" <<'REMOTE_EOF'
 set -euo pipefail
 
 log() { printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }

@@ -4,7 +4,7 @@ ARG KAMAILIO_VERSION=6.1.3
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates build-essential git pkg-config \
+        ca-certificates build-essential bison flex git pkg-config \
         libcurl4-openssl-dev libhiredis-dev libjansson-dev libpcre2-dev \
         libssl-dev libxml2-dev \
     && rm -rf /var/lib/apt/lists/*
