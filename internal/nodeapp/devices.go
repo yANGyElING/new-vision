@@ -3,6 +3,7 @@ package nodeapp
 import (
 	"context"
 	"crypto/md5"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,16 +17,20 @@ import (
 )
 
 var (
-	accessIDPattern = regexp.MustCompile(`^[0-9]{20}$`)
-	uuidPattern     = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
-	ErrInvalid      = errors.New("invalid device input")
-	ErrConflict     = errors.New("device already exists")
-	ErrNotFound     = errors.New("device not found")
+	accessIDPattern  = regexp.MustCompile(`^[0-9]{20}$`)
+	centerCodePattern = regexp.MustCompile(`^[0-9]{8}$`)
+	uuidPattern      = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
+	ErrInvalid       = errors.New("invalid device input")
+	ErrConflict      = errors.New("device already exists")
+	ErrNotFound      = errors.New("device not found")
 )
 
 type Device struct {
 	ID                  string        `json:"id"`
 	DeviceAccessID      string        `json:"device_access_id"`
+	DeviceName          string        `json:"device_name"`
+	Manufacturer        string        `json:"manufacturer"`
+	DeviceType          string        `json:"device_type"`
 	SIPUsername         string        `json:"sip_username"`
 	SIPRealm            string        `json:"sip_realm"`
 	DigestAlgorithm     string        `json:"digest_algorithm"`
@@ -40,19 +45,44 @@ type Device struct {
 }
 
 type CreateDeviceInput struct {
-	DeviceAccessID string `json:"device_access_id"`
-	SIPUsername    string `json:"sip_username"`
-	SIPRealm       string `json:"sip_realm"`
-	Password       string `json:"password"`
-	Enabled        bool   `json:"enabled"`
+	CenterCode   string `json:"center_code"`
+	DeviceType   string `json:"device_type"`
+	DeviceName   string `json:"device_name"`
+	Manufacturer string `json:"manufacturer"`
+	SIPRealm     string `json:"sip_realm"`
+	Password     string `json:"password"`
+	Enabled      bool   `json:"enabled"`
+}
+
+// GB/T 28181 device type codes (position 11-13 of the 20-digit access id).
+// The creation entry point picks the type, so the user never types it.
+const (
+	DeviceTypeIPC     = "132" // network camera
+	DeviceTypeNVR     = "118"
+	DeviceTypeDVR     = "111"
+	DeviceTypeServer  = "200" // center signaling server
+)
+
+func validDeviceType(t string) bool {
+	switch t {
+	case DeviceTypeIPC, DeviceTypeNVR, DeviceTypeDVR, DeviceTypeServer:
+		return true
+	}
+	return false
 }
 
 func (in CreateDeviceInput) Validate() error {
-	if !accessIDPattern.MatchString(in.DeviceAccessID) {
-		return fmt.Errorf("%w: device_access_id must contain exactly 20 digits", ErrInvalid)
+	if !centerCodePattern.MatchString(in.CenterCode) {
+		return fmt.Errorf("%w: center_code must contain exactly 8 digits", ErrInvalid)
 	}
-	if in.SIPUsername != in.DeviceAccessID {
-		return fmt.Errorf("%w: sip_username must equal device_access_id", ErrInvalid)
+	if !validDeviceType(in.DeviceType) {
+		return fmt.Errorf("%w: device_type must be one of 132 (IPC), 118 (NVR), 111 (DVR), 200 (server)", ErrInvalid)
+	}
+	if in.DeviceName == "" || len(in.DeviceName) > 255 {
+		return fmt.Errorf("%w: device_name must be non-empty and at most 255 bytes", ErrInvalid)
+	}
+	if in.Manufacturer == "" || len(in.Manufacturer) > 255 {
+		return fmt.Errorf("%w: manufacturer must be non-empty and at most 255 bytes", ErrInvalid)
 	}
 	if in.SIPRealm == "" || strings.TrimSpace(in.SIPRealm) != in.SIPRealm || len(in.SIPRealm) > 255 {
 		return fmt.Errorf("%w: sip_realm must be non-empty, unpadded, and at most 255 bytes", ErrInvalid)
@@ -66,6 +96,13 @@ func (in CreateDeviceInput) Validate() error {
 		return fmt.Errorf("%w: password must be between 1 and 256 bytes", ErrInvalid)
 	}
 	return nil
+}
+
+// accessIDPrefix builds the fixed 14-digit prefix of the GB/T 28181 code:
+// center(8) + industry(2, fixed 00) + type(3) + network(1, fixed 0). The
+// 6-digit sequence is allocated per prefix by the repository.
+func (in CreateDeviceInput) accessIDPrefix() string {
+	return in.CenterCode + "00" + in.DeviceType + "0"
 }
 
 func DeriveHA1(username, realm, password string) string {
@@ -86,7 +123,7 @@ func (d Device) AccessProfile() AccessProfile {
 }
 
 type DeviceRepository interface {
-	Create(context.Context, CreateDeviceInput, string) (Device, error)
+	Create(context.Context, CreateDeviceInput) (Device, error)
 	Get(context.Context, string) (Device, error)
 	SetEnabled(context.Context, string, bool) (Device, error)
 	GetByAccessID(context.Context, string) (Device, error)
@@ -109,26 +146,32 @@ func NewPostgresDeviceRepository(pool *pgxpool.Pool) *PostgresDeviceRepository {
 	return &PostgresDeviceRepository{pool: pool}
 }
 
-const deviceColumns = `id, device_access_id, sip_username, sip_realm, digest_algorithm, digest_ha1,
+const deviceColumns = `id, device_access_id, device_name, manufacturer, device_type, sip_username, sip_realm, digest_algorithm, digest_ha1,
  enabled, profile_version, access_sync_status, access_synced_version, created_at, updated_at`
 
 func scanDevice(row pgx.Row) (Device, error) {
 	var d Device
-	err := row.Scan(&d.ID, &d.DeviceAccessID, &d.SIPUsername, &d.SIPRealm, &d.DigestAlgorithm, &d.DigestHA1,
+	err := row.Scan(&d.ID, &d.DeviceAccessID, &d.DeviceName, &d.Manufacturer, &d.DeviceType,
+		&d.SIPUsername, &d.SIPRealm, &d.DigestAlgorithm, &d.DigestHA1,
 		&d.Enabled, &d.ProfileVersion, &d.AccessSyncStatus, &d.AccessSyncedVersion, &d.CreatedAt, &d.UpdatedAt)
 	return d, err
 }
 
-func (r *PostgresDeviceRepository) Create(ctx context.Context, in CreateDeviceInput, ha1 string) (Device, error) {
+func (r *PostgresDeviceRepository) Create(ctx context.Context, in CreateDeviceInput) (Device, error) {
+	accessID, err := r.allocateAccessID(ctx, in.accessIDPrefix())
+	if err != nil {
+		return Device{}, err
+	}
+	ha1 := DeriveHA1(accessID, in.SIPRealm, in.Password)
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return Device{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	d, err := scanDevice(tx.QueryRow(ctx, `INSERT INTO devices
- (device_access_id, sip_username, sip_realm, digest_ha1, enabled)
- VALUES ($1,$2,$3,$4,$5) RETURNING `+deviceColumns,
-		in.DeviceAccessID, in.SIPUsername, in.SIPRealm, ha1, in.Enabled))
+ (device_access_id, device_name, manufacturer, device_type, sip_username, sip_realm, digest_ha1, enabled)
+ VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING `+deviceColumns,
+		accessID, in.DeviceName, in.Manufacturer, in.DeviceType, accessID, in.SIPRealm, ha1, in.Enabled))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -143,6 +186,28 @@ func (r *PostgresDeviceRepository) Create(ctx context.Context, in CreateDeviceIn
 		return Device{}, err
 	}
 	return d, nil
+}
+
+// allocateAccessID returns the next 20-digit GB/T 28181 code for the given
+// 14-digit prefix (center+industry+type+network). It picks the largest
+// existing sequence for that prefix and increments it, starting at 1 when
+// the prefix is unused. Concurrent creators may collide on the UNIQUE
+// device_access_id constraint and must retry on ErrConflict.
+func (r *PostgresDeviceRepository) allocateAccessID(ctx context.Context, prefix string) (string, error) {
+	var maxSeq sql.NullInt64
+	if err := r.pool.QueryRow(ctx,
+		`SELECT MAX(CAST(SUBSTRING(device_access_id FROM 15 FOR 6) AS INTEGER)) FROM devices WHERE device_access_id LIKE $1 || '%'`,
+		prefix).Scan(&maxSeq); err != nil {
+		return "", err
+	}
+	next := int64(1)
+	if maxSeq.Valid {
+		next = maxSeq.Int64 + 1
+	}
+	if next > 999999 {
+		return "", fmt.Errorf("%w: sequence exhausted for prefix %s", ErrInvalid, prefix)
+	}
+	return prefix + fmt.Sprintf("%06d", next), nil
 }
 
 func (r *PostgresDeviceRepository) Get(ctx context.Context, id string) (Device, error) {

@@ -37,7 +37,21 @@ func (m *DeviceManager) Create(ctx context.Context, input CreateDeviceInput) (De
 	if err := input.Validate(); err != nil {
 		return Device{}, err
 	}
-	return m.repository.Create(ctx, input, DeriveHA1(input.SIPUsername, input.SIPRealm, input.Password))
+	// The repository allocates the 6-digit sequence; two concurrent creates
+	// with the same prefix can race on the UNIQUE constraint. Retry a few
+	// times with a fresh sequence before giving up.
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		device, err := m.repository.Create(ctx, input)
+		if err == nil {
+			return device, nil
+		}
+		if !errors.Is(err, ErrConflict) {
+			return Device{}, err
+		}
+		lastErr = err
+	}
+	return Device{}, lastErr
 }
 
 func (m *DeviceManager) Get(ctx context.Context, id string) (Device, error) {
@@ -95,25 +109,11 @@ type DeviceEndpoints interface {
 
 func registerDeviceRoutes(mux *http.ServeMux, service DeviceEndpoints) {
 	mux.HandleFunc("POST /internal/v1/devices", func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			DeviceAccessID string `json:"device_access_id"`
-			SIPUsername    string `json:"sip_username"`
-			SIPRealm       string `json:"sip_realm"`
-			Password       string `json:"password"`
-			Enabled        *bool  `json:"enabled"`
-		}
-		if err := decodeJSONBody(w, r, &request); err != nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		request, ok := decodeCreateDeviceBody(w, r)
+		if !ok {
 			return
 		}
-		if request.Enabled == nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid_request", "enabled is required")
-			return
-		}
-		device, err := service.Create(r.Context(), CreateDeviceInput{
-			DeviceAccessID: request.DeviceAccessID, SIPUsername: request.SIPUsername,
-			SIPRealm: request.SIPRealm, Password: request.Password, Enabled: *request.Enabled,
-		})
+		device, err := service.Create(r.Context(), request)
 		if err != nil {
 			writeDeviceError(w, err)
 			return
@@ -159,25 +159,11 @@ func registerPublicDeviceRoutes(mux *http.ServeMux, service DeviceEndpoints) {
 		writeJSON(w, http.StatusOK, devices)
 	})
 	mux.HandleFunc("POST /api/v1/devices", func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			DeviceAccessID string `json:"device_access_id"`
-			SIPUsername    string `json:"sip_username"`
-			SIPRealm       string `json:"sip_realm"`
-			Password       string `json:"password"`
-			Enabled        *bool  `json:"enabled"`
-		}
-		if err := decodeJSONBody(w, r, &request); err != nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		request, ok := decodeCreateDeviceBody(w, r)
+		if !ok {
 			return
 		}
-		if request.Enabled == nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid_request", "enabled is required")
-			return
-		}
-		device, err := service.Create(r.Context(), CreateDeviceInput{
-			DeviceAccessID: request.DeviceAccessID, SIPUsername: request.SIPUsername,
-			SIPRealm: request.SIPRealm, Password: request.Password, Enabled: *request.Enabled,
-		})
+		device, err := service.Create(r.Context(), request)
 		if err != nil {
 			writeDeviceError(w, err)
 			return
@@ -231,6 +217,35 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, target any) error {
 		return errors.New("request body must contain one JSON object")
 	}
 	return nil
+}
+
+func decodeCreateDeviceBody(w http.ResponseWriter, r *http.Request) (CreateDeviceInput, bool) {
+	var request struct {
+		CenterCode   string `json:"center_code"`
+		DeviceType   string `json:"device_type"`
+		DeviceName   string `json:"device_name"`
+		Manufacturer string `json:"manufacturer"`
+		SIPRealm     string `json:"sip_realm"`
+		Password     string `json:"password"`
+		Enabled      *bool  `json:"enabled"`
+	}
+	if err := decodeJSONBody(w, r, &request); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return CreateDeviceInput{}, false
+	}
+	if request.Enabled == nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "enabled is required")
+		return CreateDeviceInput{}, false
+	}
+	return CreateDeviceInput{
+		CenterCode:   request.CenterCode,
+		DeviceType:   request.DeviceType,
+		DeviceName:   request.DeviceName,
+		Manufacturer: request.Manufacturer,
+		SIPRealm:     request.SIPRealm,
+		Password:     request.Password,
+		Enabled:      *request.Enabled,
+	}, true
 }
 
 func writeDeviceError(w http.ResponseWriter, err error) {

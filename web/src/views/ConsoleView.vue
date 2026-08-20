@@ -6,7 +6,7 @@ import {
 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import { fetchHealth, type CheckState, type HealthState } from '@/api/health'
-import { listDevices, createDevice, setDeviceEnabled, deleteDevice, generateAccessID, type Device } from '@/api/devices'
+import { listDevices, createDevice, setDeviceEnabled, deleteDevice, previewAccessID, deviceTypeLabel, DEVICE_TYPES, type Device } from '@/api/devices'
 import { getSnapshot, pollEvents, ackEvents, type RuntimeSnapshot, type AccessEvent } from '@/api/access'
 import { sipRegister, sipKeepAlive, sipUnregister } from '@/api/test'
 
@@ -59,11 +59,6 @@ const devices = ref<Device[]>([])
 const loadingDevices = ref(false)
 const devicesError = ref('')
 
-const createForm = ref({ device_access_id: '', sip_realm: '3402000000', password: '', enabled: true })
-const creating = ref(false)
-const createError = ref('')
-const createSuccess = ref('')
-
 const deviceBusy = ref<Record<string, string>>({})
 
 async function loadDevices() {
@@ -78,8 +73,97 @@ async function loadDevices() {
   }
 }
 
-function fillGeneratedID() {
-  createForm.value.device_access_id = generateAccessID()
+const createForm = ref<{
+  device_type: string
+  center_code: string
+  device_name: string
+  manufacturer: string
+  sip_realm: string
+  password: string
+  enabled: boolean
+}>({
+  device_type: DEVICE_TYPES[0].code,
+  center_code: '34020000',
+  device_name: '',
+  manufacturer: '',
+  sip_realm: '3402000000',
+  password: '',
+  enabled: true,
+})
+const creating = ref(false)
+const createError = ref('')
+const createSuccess = ref('')
+const createOpen = ref(false)
+const typePickerOpen = ref(false)
+
+// Notion-style manufacturer select: preset options plus inline "add new".
+const manufacturerOptions = ref(['海康威视', '大华', '宇视', '华为', '天地伟业', '科达', '其他'])
+const manufacturerFilter = ref('')
+const manufacturerOpen = ref(false)
+const addingManufacturer = ref(false)
+const newManufacturer = ref('')
+
+const filteredManufacturers = computed(() => {
+  const q = manufacturerFilter.value.trim().toLowerCase()
+  if (!q) return manufacturerOptions.value
+  return manufacturerOptions.value.filter((m) => m.toLowerCase().includes(q))
+})
+const canAddManufacturer = computed(() => {
+  const v = newManufacturer.value.trim()
+  return v !== '' && !manufacturerOptions.value.includes(v)
+})
+
+function openTypePicker() {
+  typePickerOpen.value = true
+  createError.value = ''
+  createSuccess.value = ''
+}
+
+function chooseType(code: string) {
+  createForm.value.device_type = code
+  typePickerOpen.value = false
+  createOpen.value = true
+  manufacturerOpen.value = false
+}
+
+function toggleManufacturerList() {
+  if (!createOpen.value) return
+  manufacturerOpen.value = !manufacturerOpen.value
+  addingManufacturer.value = false
+  newManufacturer.value = ''
+  manufacturerFilter.value = ''
+}
+
+function pickManufacturer(m: string) {
+  createForm.value.manufacturer = m
+  manufacturerOpen.value = false
+}
+
+function startAddManufacturer() {
+  addingManufacturer.value = true
+  manufacturerFilter.value = ''
+}
+
+function confirmAddManufacturer() {
+  const v = newManufacturer.value.trim()
+  if (v === '') return
+  if (!manufacturerOptions.value.includes(v)) manufacturerOptions.value.push(v)
+  createForm.value.manufacturer = v
+  manufacturerOpen.value = false
+  addingManufacturer.value = false
+  newManufacturer.value = ''
+}
+
+const accessIDPreview = computed(() => {
+  if (createForm.value.center_code.length !== 8) return ''
+  return previewAccessID(createForm.value.center_code, createForm.value.device_type)
+})
+
+function closeCreate() {
+  createOpen.value = false
+  createError.value = ''
+  createSuccess.value = ''
+  manufacturerOpen.value = false
 }
 
 async function submitCreate() {
@@ -87,16 +171,19 @@ async function submitCreate() {
   createSuccess.value = ''
   creating.value = true
   try {
-    await createDevice({
-      device_access_id: createForm.value.device_access_id,
-      sip_username: createForm.value.device_access_id,
+    const device = await createDevice({
+      center_code: createForm.value.center_code,
+      device_type: createForm.value.device_type,
+      device_name: createForm.value.device_name.trim(),
+      manufacturer: createForm.value.manufacturer,
       sip_realm: createForm.value.sip_realm,
       password: createForm.value.password,
       enabled: createForm.value.enabled,
     })
-    createSuccess.value = '设备创建成功，正在等待同步到接入层。'
+    createSuccess.value = `设备创建成功，编码 ${device.device_access_id}，正在等待同步到接入层。`
     createForm.value.password = ''
-    if (!createForm.value.device_access_id) fillGeneratedID()
+    createForm.value.device_name = ''
+    closeCreate()
     await loadDevices()
   } catch (error) {
     createError.value = error instanceof Error ? error.message : '创建失败'
@@ -302,13 +389,60 @@ onUnmounted(() => activeHealthController?.abort())
           </button>
         </div>
 
-        <form class="create-form" @submit.prevent="submitCreate">
+        <div class="create-entry">
+          <button class="primary-button" type="button" @click="openTypePicker">
+            <Plus :size="16" />新增设备
+          </button>
+        </div>
+
+        <div v-if="typePickerOpen" class="type-picker" aria-label="选择设备类型">
+          <p class="type-picker-title">选择设备类型</p>
+          <div class="type-picker-grid">
+            <button v-for="t in DEVICE_TYPES" :key="t.code" class="type-card" type="button" @click="chooseType(t.code)">
+              <strong>{{ t.label }}</strong>
+              <span class="mono">类型码 {{ t.code }}</span>
+            </button>
+          </div>
+        </div>
+
+        <form v-if="createOpen" class="create-form" @submit.prevent="submitCreate">
+          <div class="create-form-head">
+            <span class="state-pill pill-up">{{ deviceTypeLabel(createForm.device_type) }}</span>
+            <code v-if="accessIDPreview" class="mono">编码预览：{{ accessIDPreview }}·{{ '序号后端分配' }}</code>
+          </div>
           <div class="field">
-            <label for="create-id">设备接入 ID（20 位数字）</label>
-            <div class="input-with-action">
-              <input id="create-id" v-model="createForm.device_access_id" inputmode="numeric" pattern="[0-9]{20}" required placeholder="34020000001320000001" />
-              <button class="icon-button" type="button" aria-label="生成随机 20 位接入 ID" title="生成随机 ID" @click="fillGeneratedID"><ListPlus :size="18" /></button>
+            <label for="create-name">设备名称</label>
+            <input id="create-name" v-model="createForm.device_name" required maxlength="255" placeholder="如：东门 1 号摄像机" />
+          </div>
+          <div class="field">
+            <label for="create-manufacturer">厂商</label>
+            <div class="manufacturer-select" :class="{ open: manufacturerOpen }">
+              <div class="input-with-action">
+                <input
+                  id="create-manufacturer"
+                  v-model="createForm.manufacturer"
+                  required
+                  maxlength="255"
+                  placeholder="选择或输入厂商"
+                  @focus="manufacturerOpen = true"
+                />
+                <button class="icon-button" type="button" aria-label="选择厂商" title="选择厂商" @click="toggleManufacturerList"><ListPlus :size="18" /></button>
+              </div>
+              <div v-if="manufacturerOpen" class="manufacturer-menu" role="listbox">
+                <template v-if="!addingManufacturer">
+                  <button v-for="m in filteredManufacturers" :key="m" class="manufacturer-option" type="button" role="option" @click="pickManufacturer(m)">{{ m }}</button>
+                  <button class="manufacturer-add" type="button" @click="startAddManufacturer">+ 新增厂商</button>
+                </template>
+                <template v-else>
+                  <input v-model="newManufacturer" class="manufacturer-new" placeholder="输入新厂商名称" @keyup.enter="confirmAddManufacturer" />
+                  <button class="manufacturer-add" type="button" :disabled="!canAddManufacturer" @click="confirmAddManufacturer">确认新增</button>
+                </template>
+              </div>
             </div>
+          </div>
+          <div class="field">
+            <label for="create-center">中心编码（8 位）</label>
+            <input id="create-center" v-model="createForm.center_code" inputmode="numeric" pattern="[0-9]{8}" required maxlength="8" placeholder="34020000" />
           </div>
           <div class="field">
             <label for="create-realm">SIP Realm</label>
@@ -324,12 +458,17 @@ onUnmounted(() => activeHealthController?.abort())
               创建后立即启用
             </label>
           </div>
-          <button class="primary-button" type="submit" :disabled="creating">
-            <Plus :size="16" />{{ creating ? '创建中…' : '创建设备' }}
-          </button>
+          <div class="create-form-actions">
+            <button class="ghost-button" type="button" @click="closeCreate">取消</button>
+            <button class="primary-button" type="submit" :disabled="creating">
+              <Plus :size="16" />{{ creating ? '创建中…' : '创建设备' }}
+            </button>
+          </div>
           <p v-if="createError" class="form-error" role="alert">{{ createError }}</p>
           <p v-if="createSuccess" class="form-success" role="status">{{ createSuccess }}</p>
         </form>
+
+        <p v-if="createSuccess && !createOpen" class="form-success" role="status">{{ createSuccess }}</p>
 
         <p v-if="devicesError" class="form-error" role="alert">{{ devicesError }}</p>
 
@@ -337,22 +476,25 @@ onUnmounted(() => activeHealthController?.abort())
           <table class="device-table">
             <thead>
               <tr>
+                <th scope="col">名称</th>
                 <th scope="col">接入 ID</th>
-                <th scope="col">Realm</th>
+                <th scope="col">类型</th>
+                <th scope="col">厂商</th>
                 <th scope="col">状态</th>
                 <th scope="col">同步</th>
                 <th scope="col">运行时</th>
-                <th scope="col">版本</th>
                 <th scope="col" class="col-actions">操作</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!loadingDevices && devices.length === 0">
-                <td colspan="7" class="empty-row">还没有设备，用上方表单创建第一台。</td>
+                <td colspan="8" class="empty-row">还没有设备，点上方“新增设备”创建第一台。</td>
               </tr>
               <tr v-for="device in devices" :key="device.id">
+                <td class="device-name">{{ device.device_name || '—' }}</td>
                 <td class="mono">{{ device.device_access_id }}</td>
-                <td>{{ device.sip_realm }}</td>
+                <td>{{ deviceTypeLabel(device.device_type) }}</td>
+                <td>{{ device.manufacturer || '—' }}</td>
                 <td>
                   <span class="state-pill" :class="device.enabled ? 'pill-up' : 'pill-muted'">
                     <Play v-if="device.enabled" :size="14" /><Pause v-else :size="14" />

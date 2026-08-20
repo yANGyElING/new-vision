@@ -20,7 +20,7 @@ type syncRepo struct {
 	processedThrough map[string]int64
 }
 
-func (r *syncRepo) Create(context.Context, CreateDeviceInput, string) (Device, error) {
+func (r *syncRepo) Create(context.Context, CreateDeviceInput) (Device, error) {
 	return r.device, nil
 }
 func (r *syncRepo) Get(context.Context, string) (Device, error)              { return r.device, nil }

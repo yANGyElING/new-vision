@@ -18,20 +18,26 @@ func TestDeriveHA1(t *testing.T) {
 }
 
 func TestCreateDeviceValidation(t *testing.T) {
-	valid := CreateDeviceInput{DeviceAccessID: "34020000001320000001", SIPUsername: "34020000001320000001", SIPRealm: "3402000000", Password: "secret", Enabled: true}
+	valid := CreateDeviceInput{CenterCode: "34020000", DeviceType: DeviceTypeIPC, DeviceName: "东门摄像机", Manufacturer: "海康威视", SIPRealm: "3402000000", Password: "secret", Enabled: true}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid input rejected: %v", err)
 	}
 	for name, input := range map[string]CreateDeviceInput{
-		"short id":           validWith(valid, func(v *CreateDeviceInput) { v.DeviceAccessID = "1" }),
-		"different username": validWith(valid, func(v *CreateDeviceInput) { v.SIPUsername = "34020000001320000002" }),
-		"empty realm":        validWith(valid, func(v *CreateDeviceInput) { v.SIPRealm = "" }),
-		"control in realm":   validWith(valid, func(v *CreateDeviceInput) { v.SIPRealm = "realm\x00suffix" }),
-		"empty password":     validWith(valid, func(v *CreateDeviceInput) { v.Password = "" }),
+		"short center code":   validWith(valid, func(v *CreateDeviceInput) { v.CenterCode = "3402000" }),
+		"non-digit center":    validWith(valid, func(v *CreateDeviceInput) { v.CenterCode = "3402000a" }),
+		"unknown device type": validWith(valid, func(v *CreateDeviceInput) { v.DeviceType = "999" }),
+		"empty name":          validWith(valid, func(v *CreateDeviceInput) { v.DeviceName = "" }),
+		"empty manufacturer":  validWith(valid, func(v *CreateDeviceInput) { v.Manufacturer = "" }),
+		"empty realm":         validWith(valid, func(v *CreateDeviceInput) { v.SIPRealm = "" }),
+		"control in realm":    validWith(valid, func(v *CreateDeviceInput) { v.SIPRealm = "realm\x00suffix" }),
+		"empty password":      validWith(valid, func(v *CreateDeviceInput) { v.Password = "" }),
 	} {
 		if err := input.Validate(); err == nil {
 			t.Errorf("%s accepted invalid input", name)
 		}
+	}
+	if got := valid.accessIDPrefix(); got != "34020000001320" {
+		t.Errorf("accessIDPrefix = %s, want 34020000001320", got)
 	}
 }
 
@@ -75,10 +81,10 @@ func TestAccessClientDecodesOfflineEventWithoutExpiresAt(t *testing.T) {
 }
 
 func TestDeviceAPIDoesNotLeakCredentials(t *testing.T) {
-	stub := &endpointStub{device: Device{ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", DeviceAccessID: "34020000001320000001", SIPUsername: "34020000001320000001", SIPRealm: "3402000000", DigestAlgorithm: "MD5", Enabled: true, ProfileVersion: 1, AccessSyncStatus: "pending", CreatedAt: time.Now(), UpdatedAt: time.Now()}}
+	stub := &endpointStub{device: Device{ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", DeviceAccessID: "34020000001320000001", DeviceName: "东门摄像机", Manufacturer: "海康威视", DeviceType: DeviceTypeIPC, SIPUsername: "34020000001320000001", SIPRealm: "3402000000", DigestAlgorithm: "MD5", Enabled: true, ProfileVersion: 1, AccessSyncStatus: "pending", CreatedAt: time.Now(), UpdatedAt: time.Now()}}
 	server := httptest.NewServer(NewHandler(func(context.Context) error { return nil }, func(context.Context) error { return nil }, time.Second, http.NotFoundHandler(), stub))
 	defer server.Close()
-	body := `{"device_access_id":"34020000001320000001","sip_username":"34020000001320000001","sip_realm":"3402000000","password":"super-secret","enabled":true}`
+	body := `{"center_code":"34020000","device_type":"132","device_name":"东门摄像机","manufacturer":"海康威视","sip_realm":"3402000000","password":"super-secret","enabled":true}`
 	response, err := http.Post(server.URL+"/internal/v1/devices", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
