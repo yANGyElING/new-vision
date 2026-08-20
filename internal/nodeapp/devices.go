@@ -95,6 +95,7 @@ type DeviceRepository interface {
 	MarkSynced(context.Context, string, int64) error
 	MarkReconciled(context.Context, []ReconciledProfile) error
 	MarkFailed(context.Context, string, int, time.Time, string) error
+	Delete(context.Context, string) error
 }
 
 type ReconciledProfile struct {
@@ -214,6 +215,20 @@ func (r *PostgresDeviceRepository) List(ctx context.Context) ([]Device, error) {
 		devices = append(devices, d)
 	}
 	return devices, rows.Err()
+}
+
+func (r *PostgresDeviceRepository) Delete(ctx context.Context, id string) error {
+	if !uuidPattern.MatchString(id) {
+		return ErrNotFound
+	}
+	tag, err := r.pool.Exec(ctx, `DELETE FROM devices WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *PostgresDeviceRepository) NextPending(ctx context.Context) (Device, bool, error) {

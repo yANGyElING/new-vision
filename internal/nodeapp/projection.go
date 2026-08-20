@@ -57,6 +57,14 @@ func (p *RedisProjection) Apply(ctx context.Context, deviceID string, state Runt
 	return err
 }
 
+func (p *RedisProjection) Remove(ctx context.Context, deviceID string) error {
+	pipe := p.client.TxPipeline()
+	pipe.Del(ctx, runtimeKey(deviceID))
+	pipe.SRem(ctx, runtimeIndexKey(), deviceID)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
 func (p *RedisProjection) Replace(ctx context.Context, states map[string]RuntimeState, snapshot RuntimeSnapshot) error {
 	ids, err := p.client.SMembers(ctx, runtimeIndexKey()).Result()
 	if err != nil {

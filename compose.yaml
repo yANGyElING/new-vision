@@ -61,6 +61,8 @@ services:
       NV_ACCESS_RPC_TIMEOUT: ${NV_ACCESS_RPC_TIMEOUT}
       NV_ACCESS_POLL_INTERVAL: ${NV_ACCESS_POLL_INTERVAL}
       NV_ACCESS_INSTANCE_ID: ${NV_ACCESS_INSTANCE_ID}
+      NV_SIP_HOST: ${NV_SIP_HOST:-node-access}
+      NV_SIP_PORT: ${NV_SIP_PORT:-5060}
     depends_on:
       postgres:
         condition: service_started

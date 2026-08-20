@@ -15,13 +15,22 @@ type RuntimeReader interface {
 	Get(context.Context, string) (*RuntimeState, error)
 }
 
+type RuntimeRemover interface {
+	Remove(context.Context, string) error
+}
+
 type DeviceManager struct {
 	repository DeviceRepository
 	runtime    RuntimeReader
+	remover    RuntimeRemover
 }
 
 func NewDeviceManager(repository DeviceRepository, runtime RuntimeReader) *DeviceManager {
-	return &DeviceManager{repository: repository, runtime: runtime}
+	manager := &DeviceManager{repository: repository, runtime: runtime}
+	if remover, ok := runtime.(RuntimeRemover); ok {
+		manager.remover = remover
+	}
+	return manager
 }
 
 func (m *DeviceManager) Create(ctx context.Context, input CreateDeviceInput) (Device, error) {
@@ -49,10 +58,39 @@ func (m *DeviceManager) SetEnabled(ctx context.Context, id string, enabled bool)
 	return m.repository.SetEnabled(ctx, id, enabled)
 }
 
+func (m *DeviceManager) List(ctx context.Context) ([]Device, error) {
+	devices, err := m.repository.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if m.runtime != nil {
+		for i := range devices {
+			runtime, getErr := m.runtime.Get(ctx, devices[i].ID)
+			if getErr != nil {
+				return nil, getErr
+			}
+			devices[i].Runtime = runtime
+		}
+	}
+	return devices, nil
+}
+
+func (m *DeviceManager) Delete(ctx context.Context, id string) error {
+	if err := m.repository.Delete(ctx, id); err != nil {
+		return err
+	}
+	if m.remover != nil {
+		return m.remover.Remove(ctx, id)
+	}
+	return nil
+}
+
 type DeviceEndpoints interface {
 	Create(context.Context, CreateDeviceInput) (Device, error)
 	Get(context.Context, string) (Device, error)
 	SetEnabled(context.Context, string, bool) (Device, error)
+	List(context.Context) ([]Device, error)
+	Delete(context.Context, string) error
 }
 
 func registerDeviceRoutes(mux *http.ServeMux, service DeviceEndpoints) {
@@ -108,6 +146,77 @@ func registerDeviceRoutes(mux *http.ServeMux, service DeviceEndpoints) {
 			return
 		}
 		writeJSON(w, http.StatusOK, device)
+	})
+}
+
+func registerPublicDeviceRoutes(mux *http.ServeMux, service DeviceEndpoints) {
+	mux.HandleFunc("GET /api/v1/devices", func(w http.ResponseWriter, r *http.Request) {
+		devices, err := service.List(r.Context())
+		if err != nil {
+			writeDeviceError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, devices)
+	})
+	mux.HandleFunc("POST /api/v1/devices", func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			DeviceAccessID string `json:"device_access_id"`
+			SIPUsername    string `json:"sip_username"`
+			SIPRealm       string `json:"sip_realm"`
+			Password       string `json:"password"`
+			Enabled        *bool  `json:"enabled"`
+		}
+		if err := decodeJSONBody(w, r, &request); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		if request.Enabled == nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "enabled is required")
+			return
+		}
+		device, err := service.Create(r.Context(), CreateDeviceInput{
+			DeviceAccessID: request.DeviceAccessID, SIPUsername: request.SIPUsername,
+			SIPRealm: request.SIPRealm, Password: request.Password, Enabled: *request.Enabled,
+		})
+		if err != nil {
+			writeDeviceError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, device)
+	})
+	mux.HandleFunc("GET /api/v1/devices/{id}", func(w http.ResponseWriter, r *http.Request) {
+		device, err := service.Get(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeDeviceError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, device)
+	})
+	mux.HandleFunc("PATCH /api/v1/devices/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := decodeJSONBody(w, r, &request); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		if request.Enabled == nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "enabled is required")
+			return
+		}
+		device, err := service.SetEnabled(r.Context(), r.PathValue("id"), *request.Enabled)
+		if err != nil {
+			writeDeviceError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, device)
+	})
+	mux.HandleFunc("DELETE /api/v1/devices/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if err := service.Delete(r.Context(), r.PathValue("id")); err != nil {
+			writeDeviceError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 }
 

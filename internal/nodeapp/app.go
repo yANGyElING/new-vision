@@ -51,10 +51,16 @@ func New(ctx context.Context, cfg Config, version string) (*App, error) {
 	devices := NewPostgresDeviceRepository(postgres)
 	projection := NewRedisProjection(redisClient)
 	access := NewAccessClient(cfg.AccessRPCURL, cfg.AccessRPCTimeout)
+	deviceManager := NewDeviceManager(devices, projection)
+	sipSim := NewSIPSimulator(cfg.SIPHost, cfg.SIPPort, cfg.AccessRPCTimeout, devices)
 	app := &App{
-		Handler: NewHandler(postgres.Ping, func(ctx context.Context) error {
+		Handler: NewConsoleHandler(postgres.Ping, func(ctx context.Context) error {
 			return redisClient.Ping(ctx).Err()
-		}, cfg.HealthTimeout, metrics, NewDeviceManager(devices, projection)),
+		}, cfg.HealthTimeout, metrics, ConsoleDeps{
+			Devices: deviceManager,
+			Access:  access,
+			SIP:     sipSim,
+		}),
 		postgres: postgres,
 		redis:    redisClient,
 		cancel:   cancel,

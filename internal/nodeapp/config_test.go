@@ -15,6 +15,9 @@ func TestLoadConfig(t *testing.T) {
 	if cfg.PostgresHost != "postgres" || cfg.RedisDatabase != 0 {
 		t.Fatalf("LoadConfig() = %+v", cfg)
 	}
+	if cfg.SIPHost != "node-access" || cfg.SIPPort != 5060 {
+		t.Fatalf("LoadConfig() sip = %+v", cfg)
+	}
 }
 
 func TestLoadConfigRejectsMissingAndInvalidValuesWithoutSecrets(t *testing.T) {

@@ -29,6 +29,8 @@ type Config struct {
 	AccessRPCTimeout   time.Duration
 	AccessPollInterval time.Duration
 	AccessInstanceID   string
+	SIPHost            string
+	SIPPort            int
 }
 
 func LoadConfig(lookup platform.LookupEnv) (Config, error) {
@@ -101,6 +103,15 @@ func LoadConfig(lookup platform.LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("NV_ACCESS_INSTANCE_ID must be an unpadded value no longer than 128 bytes")
 	}
 
+	sipHost := valueOrDefault(lookup, "NV_SIP_HOST", "node-access")
+	if strings.TrimSpace(sipHost) == "" || len(sipHost) > 255 {
+		return Config{}, fmt.Errorf("NV_SIP_HOST must be a non-empty value no longer than 255 bytes")
+	}
+	sipPort, err := platform.Port(lookup, "NV_SIP_PORT", 5060)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		HTTP: httpConfig, HealthTimeout: healthTimeout,
 		PostgresHost: postgresHost, PostgresPort: postgresPort, PostgresDatabase: postgresDatabase,
@@ -109,6 +120,7 @@ func LoadConfig(lookup platform.LookupEnv) (Config, error) {
 		RedisPassword: redisPassword, RedisDatabase: redisDatabase,
 		AccessRPCURL: accessRPCURL, AccessRPCTimeout: accessRPCTimeout,
 		AccessPollInterval: accessPollInterval, AccessInstanceID: accessInstanceID,
+		SIPHost: sipHost, SIPPort: sipPort,
 	}, nil
 }
 

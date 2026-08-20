@@ -54,6 +54,22 @@ docker compose ps
 
 默认 HTTP 入口为 `http://localhost:8080/`，由 `reverse-proxy` 发布；摄像头 SIP UDP 通过 `${NV_SIP_PORT}`（默认 `5060`）发布。Kamailio 的 `8090/tcp` Access API 只在 Compose 网络内暴露，RTSP、RTMP、RTP、WebRTC 和 ZLMediaKit 管理端口均未发布。
 
+## 测试控制台
+
+统一入口 `http://localhost:8080/` 提供测试控制台页面（设备管理、链路测试、Access 运行时查看），依赖下列公开 API（测试专用，生产前需启用认证）：
+
+- `GET /api/v1/devices`：设备列表（含运行时状态）。
+- `POST /api/v1/devices`：创建设备；`device_access_id` 必须是 20 位数字且等于 `sip_username`，密码仅用于派生 MD5 HA1，不落库。
+- `GET /api/v1/devices/{id}`：查询单台设备。
+- `PATCH /api/v1/devices/{id}`：启用/停用（`{"enabled": bool}`）。
+- `DELETE /api/v1/devices/{id}`：删除设备（级联清理 outbox，下一次 reconcile 从接入层移除 profile）。
+- `GET /api/v1/access/snapshot`：接入层运行时快照（透传 `access.v1.getRuntimeSnapshot`）。
+- `GET /api/v1/access/events?after=&limit=`：事件轮询（透传 `access.v1.pollEvents`）。
+- `POST /api/v1/access/ack`：确认事件（`{"through_sequence": n}`）。
+- `POST /api/v1/test/sip/register` / `/keepalive` / `/unregister`：测试专用 SIP 模拟器（REGISTER+Digest、GB28181 KeepAlive MESSAGE、`Expires: 0` 注销），目标由 `NV_SIP_HOST`/`NV_SIP_PORT` 指定（默认 `node-access:5060`）。
+
+原有内部设备 API `POST/GET/PATCH /internal/v1/devices` 保持不变，`/internal/` 仍被 reverse-proxy 屏蔽。
+
 ## 健康检查
 
 - `GET /api/health`：统一入口公开的非敏感健康摘要。

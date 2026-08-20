@@ -59,6 +59,7 @@ func (r *syncRepo) MarkFailed(_ context.Context, _ string, attempts int, _ time.
 	r.failed = append(r.failed, attempts)
 	return nil
 }
+func (r *syncRepo) Delete(context.Context, string) error { return nil }
 
 type syncAccess struct {
 	result       ProfileResult

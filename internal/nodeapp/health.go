@@ -23,6 +23,16 @@ type Handler struct {
 }
 
 func NewHandler(postgres, redis Probe, timeout time.Duration, metrics http.Handler, devices ...DeviceEndpoints) http.Handler {
+	return newHandler(postgres, redis, timeout, metrics, devices...)
+}
+
+func NewConsoleHandler(postgres, redis Probe, timeout time.Duration, metrics http.Handler, deps ConsoleDeps) http.Handler {
+	mux := newHandler(postgres, redis, timeout, metrics, deps.Devices)
+	registerConsoleRoutes(mux, deps)
+	return mux
+}
+
+func newHandler(postgres, redis Probe, timeout time.Duration, metrics http.Handler, devices ...DeviceEndpoints) *http.ServeMux {
 	h := &Handler{postgres: postgres, redis: redis, timeout: timeout, metrics: metrics}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /livez", h.live)
