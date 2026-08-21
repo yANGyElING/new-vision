@@ -10,7 +10,7 @@ import (
 type AccessRuntimeProjection interface {
 	RuntimeReader
 	Apply(context.Context, string, RuntimeState) error
-	Replace(context.Context, map[string]RuntimeState, RuntimeSnapshot) error
+	Replace(context.Context, map[string]RuntimeState) error
 	Cursor(context.Context, string) (string, int64, error)
 	SetCursor(context.Context, string, string, int64) error
 }
@@ -20,14 +20,13 @@ type SyncRunner struct {
 	access     AccessAPI
 	projection AccessRuntimeProjection
 	interval   time.Duration
-	attempts   map[string]int
 }
 
 func NewSyncRunner(repository DeviceRepository, access AccessAPI, projection AccessRuntimeProjection, interval time.Duration) *SyncRunner {
 	if interval <= 0 {
 		interval = time.Second
 	}
-	return &SyncRunner{repository: repository, access: access, projection: projection, interval: interval, attempts: make(map[string]int)}
+	return &SyncRunner{repository: repository, access: access, projection: projection, interval: interval}
 }
 
 func (s *SyncRunner) Run(ctx context.Context) {
@@ -94,7 +93,7 @@ func (s *SyncRunner) reconcile(ctx context.Context) error {
 				LastSeen: registration.LastSeen, SessionEpoch: snapshot.SessionEpoch}
 		}
 	}
-	if err = s.projection.Replace(ctx, states, snapshot); err != nil {
+	if err = s.projection.Replace(ctx, states); err != nil {
 		return err
 	}
 	if err = s.projection.SetCursor(ctx, snapshot.AccessInstanceID, snapshot.SessionEpoch, snapshot.LatestSequence); err != nil {
@@ -119,16 +118,7 @@ func (s *SyncRunner) syncOne(ctx context.Context) error {
 		if IsRPCErrorCode(err, "PROFILE_VERSION_CONFLICT") {
 			return ErrReconcile
 		}
-		s.attempts[device.ID]++
-		attempt := s.attempts[device.ID]
-		backoff := s.interval
-		for i := 1; i < attempt && backoff < time.Minute; i++ {
-			backoff *= 2
-		}
-		if backoff > time.Minute {
-			backoff = time.Minute
-		}
-		return s.repository.MarkFailed(ctx, device.ID, attempt, time.Now().Add(backoff), safeError(err))
+		return s.repository.MarkFailed(ctx, device.ID, s.interval, safeError(err))
 	}
 	if profileResult.Status != "applied" && profileResult.Status != "unchanged" {
 		return ErrReconcile
@@ -136,7 +126,6 @@ func (s *SyncRunner) syncOne(ctx context.Context) error {
 	if profileResult.Version != 0 && profileResult.Version != device.ProfileVersion {
 		return ErrReconcile
 	}
-	s.attempts[device.ID] = 0
 	return s.repository.MarkSynced(ctx, device.ID, device.ProfileVersion)
 }
 

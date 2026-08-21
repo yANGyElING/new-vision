@@ -22,26 +22,23 @@ type Handler struct {
 	metrics  http.Handler
 }
 
-func NewHandler(postgres, redis Probe, timeout time.Duration, metrics http.Handler, devices ...DeviceEndpoints) http.Handler {
-	return newHandler(postgres, redis, timeout, metrics, devices...)
+func NewHandler(postgres, redis Probe, timeout time.Duration, metrics http.Handler) http.Handler {
+	return newHandler(postgres, redis, timeout, metrics)
 }
 
 func NewConsoleHandler(postgres, redis Probe, timeout time.Duration, metrics http.Handler, deps ConsoleDeps) http.Handler {
-	mux := newHandler(postgres, redis, timeout, metrics, deps.Devices)
+	mux := newHandler(postgres, redis, timeout, metrics)
 	registerConsoleRoutes(mux, deps)
 	return mux
 }
 
-func newHandler(postgres, redis Probe, timeout time.Duration, metrics http.Handler, devices ...DeviceEndpoints) *http.ServeMux {
+func newHandler(postgres, redis Probe, timeout time.Duration, metrics http.Handler) *http.ServeMux {
 	h := &Handler{postgres: postgres, redis: redis, timeout: timeout, metrics: metrics}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /livez", h.live)
 	mux.HandleFunc("GET /readyz", h.ready)
 	mux.HandleFunc("GET /api/health", h.ready)
 	mux.Handle("GET /metrics", metrics)
-	if len(devices) > 0 && devices[0] != nil {
-		registerDeviceRoutes(mux, devices[0])
-	}
 	return mux
 }
 
@@ -53,27 +50,12 @@ func (h *Handler) ready(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.timeout)
 	defer cancel()
 
-	type result struct {
-		name string
-		up   bool
-	}
-	results := make(chan result, 2)
-	for name, probe := range map[string]Probe{"postgres": h.postgres, "redis": h.redis} {
-		go func() {
-			results <- result{name: name, up: probe(ctx) == nil}
-		}()
-	}
-
 	checks := map[string]string{"postgres": "down", "redis": "down"}
-	for completed := 0; completed < 2; completed++ {
-		select {
-		case probeResult := <-results:
-			if probeResult.up {
-				checks[probeResult.name] = "up"
-			}
-		case <-ctx.Done():
-			completed = 2
-		}
+	if h.postgres(ctx) == nil {
+		checks["postgres"] = "up"
+	}
+	if h.redis(ctx) == nil {
+		checks["redis"] = "up"
 	}
 
 	statusCode := http.StatusOK

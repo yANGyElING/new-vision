@@ -12,7 +12,7 @@ type syncRepo struct {
 	device           Device
 	pending          bool
 	marked           []int64
-	failed           []int
+	failed           int
 	listed           []Device
 	reconciled       []ReconciledProfile
 	currentVersions  map[string]int64
@@ -28,7 +28,7 @@ func (r *syncRepo) SetEnabled(context.Context, string, bool) (Device, error) { r
 func (r *syncRepo) UpdateMeta(context.Context, string, *string, *string) (Device, error) {
 	return r.device, nil
 }
-func (r *syncRepo) GetByAccessID(context.Context, string) (Device, error)    { return r.device, nil }
+func (r *syncRepo) GetByAccessID(context.Context, string) (Device, error) { return r.device, nil }
 func (r *syncRepo) List(context.Context) ([]Device, error) {
 	if r.listed != nil {
 		return r.listed, nil
@@ -58,8 +58,8 @@ func (r *syncRepo) MarkReconciled(_ context.Context, profiles []ReconciledProfil
 	}
 	return nil
 }
-func (r *syncRepo) MarkFailed(_ context.Context, _ string, attempts int, _ time.Time, _ string) error {
-	r.failed = append(r.failed, attempts)
+func (r *syncRepo) MarkFailed(_ context.Context, _ string, _ time.Duration, _ string) error {
+	r.failed++
 	return nil
 }
 func (r *syncRepo) Delete(context.Context, string) error { return nil }
@@ -122,6 +122,9 @@ type syncProjection struct {
 }
 
 func (p *syncProjection) Get(context.Context, string) (*RuntimeState, error) { return nil, nil }
+func (p *syncProjection) GetMany(context.Context, []string) (map[string]*RuntimeState, error) {
+	return nil, nil
+}
 func (p *syncProjection) Apply(context.Context, string, RuntimeState) error {
 	p.applyCount++
 	if p.operations != nil {
@@ -129,7 +132,7 @@ func (p *syncProjection) Apply(context.Context, string, RuntimeState) error {
 	}
 	return nil
 }
-func (p *syncProjection) Replace(context.Context, map[string]RuntimeState, RuntimeSnapshot) error {
+func (p *syncProjection) Replace(context.Context, map[string]RuntimeState) error {
 	if p.operations != nil {
 		*p.operations = append(*p.operations, "replace")
 	}
@@ -162,7 +165,7 @@ func TestSyncOneUsesCurrentProfileVersion(t *testing.T) {
 	}
 }
 
-func TestSyncOneRetryBackoffAttemptsAndNoCredentialDiagnostic(t *testing.T) {
+func TestSyncOneRetryAndNoCredentialDiagnostic(t *testing.T) {
 	repo := &syncRepo{pending: true, device: Device{ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", DeviceAccessID: "34020000001320000001", SIPUsername: "34020000001320000001", SIPRealm: "realm", DigestHA1: "0123456789abcdef0123456789abcdef", Enabled: true, ProfileVersion: 1}}
 	access := &syncAccess{err: errors.New("password=secret digest_ha1=0123456789abcdef0123456789abcdef")}
 	runner := NewSyncRunner(repo, access, &syncProjection{}, time.Millisecond)
@@ -170,8 +173,8 @@ func TestSyncOneRetryBackoffAttemptsAndNoCredentialDiagnostic(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner.syncOne(context.Background())
-	if len(repo.failed) != 2 || repo.failed[0] != 1 || repo.failed[1] != 2 {
-		t.Fatalf("attempts = %v", repo.failed)
+	if repo.failed != 2 {
+		t.Fatalf("failure count = %d", repo.failed)
 	}
 	if safeError(access.err) != "access synchronization failed" {
 		t.Fatal("diagnostic was not redacted")

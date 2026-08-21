@@ -17,12 +17,12 @@ import (
 )
 
 var (
-	accessIDPattern  = regexp.MustCompile(`^[0-9]{20}$`)
+	accessIDPattern   = regexp.MustCompile(`^[0-9]{20}$`)
 	centerCodePattern = regexp.MustCompile(`^[0-9]{8}$`)
-	uuidPattern      = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
-	ErrInvalid       = errors.New("invalid device input")
-	ErrConflict      = errors.New("device already exists")
-	ErrNotFound      = errors.New("device not found")
+	uuidPattern       = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
+	ErrInvalid        = errors.New("invalid device input")
+	ErrConflict       = errors.New("device already exists")
+	ErrNotFound       = errors.New("device not found")
 )
 
 type Device struct {
@@ -57,10 +57,10 @@ type CreateDeviceInput struct {
 // GB/T 28181 device type codes (position 11-13 of the 20-digit access id).
 // The creation entry point picks the type, so the user never types it.
 const (
-	DeviceTypeIPC     = "132" // network camera
-	DeviceTypeNVR     = "118"
-	DeviceTypeDVR     = "111"
-	DeviceTypeServer  = "200" // center signaling server
+	DeviceTypeIPC    = "132" // network camera
+	DeviceTypeNVR    = "118"
+	DeviceTypeDVR    = "111"
+	DeviceTypeServer = "200" // center signaling server
 )
 
 func validDeviceType(t string) bool {
@@ -132,7 +132,7 @@ type DeviceRepository interface {
 	NextPending(context.Context) (Device, bool, error)
 	MarkSynced(context.Context, string, int64) error
 	MarkReconciled(context.Context, []ReconciledProfile) error
-	MarkFailed(context.Context, string, int, time.Time, string) error
+	MarkFailed(context.Context, string, time.Duration, string) error
 	Delete(context.Context, string) error
 }
 
@@ -381,11 +381,17 @@ func (r *PostgresDeviceRepository) MarkReconciled(ctx context.Context, profiles 
 	return tx.Commit(ctx)
 }
 
-func (r *PostgresDeviceRepository) MarkFailed(ctx context.Context, id string, attempts int, next time.Time, message string) error {
+func (r *PostgresDeviceRepository) MarkFailed(ctx context.Context, id string, interval time.Duration, message string) error {
 	if len(message) > 1000 {
 		message = message[:1000]
 	}
-	_, err := r.pool.Exec(ctx, `UPDATE access_profile_outbox SET attempt_count=$2, next_attempt_at=$3, last_error=$4
- WHERE device_id=$1 AND processed_at IS NULL`, id, attempts, next, message)
+	// attempt_count persists across restarts and drives the exponential backoff;
+	// all SET expressions see the pre-update row, so the multiplier uses the
+	// count before this failure (first failure doubles nothing, then 2x, 4x, ...).
+	_, err := r.pool.Exec(ctx, `UPDATE access_profile_outbox
+ SET attempt_count = attempt_count + 1,
+     next_attempt_at = now() + LEAST($2::bigint * (1 << LEAST(attempt_count, 15)) * interval '1 microsecond', interval '1 minute'),
+     last_error = $3
+ WHERE device_id = $1 AND processed_at IS NULL`, id, interval.Microseconds(), message)
 	return err
 }

@@ -2,7 +2,6 @@ package nodeapp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -18,16 +17,45 @@ func NewRedisProjection(client *redis.Client) *RedisProjection {
 	return &RedisProjection{client: client}
 }
 
-func runtimeKey(deviceID string) string  { return nodeAppRedisPrefix + "device-runtime:" + deviceID }
-func runtimeIndexKey() string            { return nodeAppRedisPrefix + "device-runtime-ids" }
-func cursorKey(instance string) string   { return nodeAppRedisPrefix + "access-cursor:" + instance }
-func snapshotKey(instance string) string { return nodeAppRedisPrefix + "access-snapshot:" + instance }
+func runtimeKey(deviceID string) string { return nodeAppRedisPrefix + "device-runtime:" + deviceID }
+func runtimeIndexKey() string           { return nodeAppRedisPrefix + "device-runtime-ids" }
+func cursorKey(instance string) string  { return nodeAppRedisPrefix + "access-cursor:" + instance }
 
 func (p *RedisProjection) Get(ctx context.Context, deviceID string) (*RuntimeState, error) {
 	values, err := p.client.HGetAll(ctx, runtimeKey(deviceID)).Result()
 	if err != nil {
 		return nil, err
 	}
+	return decodeRuntimeState(values)
+}
+
+// GetMany loads runtime states for many devices in a single round trip.
+func (p *RedisProjection) GetMany(ctx context.Context, ids []string) (map[string]*RuntimeState, error) {
+	if len(ids) == 0 {
+		return map[string]*RuntimeState{}, nil
+	}
+	pipe := p.client.Pipeline()
+	commands := make([]*redis.MapStringStringCmd, len(ids))
+	for i, id := range ids {
+		commands[i] = pipe.HGetAll(ctx, runtimeKey(id))
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+	states := make(map[string]*RuntimeState, len(ids))
+	for i, id := range ids {
+		state, err := decodeRuntimeState(commands[i].Val())
+		if err != nil {
+			return nil, fmt.Errorf("decode runtime %s: %w", id, err)
+		}
+		if state != nil {
+			states[id] = state
+		}
+	}
+	return states, nil
+}
+
+func decodeRuntimeState(values map[string]string) (*RuntimeState, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}
@@ -65,7 +93,7 @@ func (p *RedisProjection) Remove(ctx context.Context, deviceID string) error {
 	return err
 }
 
-func (p *RedisProjection) Replace(ctx context.Context, states map[string]RuntimeState, snapshot RuntimeSnapshot) error {
+func (p *RedisProjection) Replace(ctx context.Context, states map[string]RuntimeState) error {
 	ids, err := p.client.SMembers(ctx, runtimeIndexKey()).Result()
 	if err != nil {
 		return err
@@ -85,7 +113,6 @@ func (p *RedisProjection) Replace(ctx context.Context, states map[string]Runtime
 		})
 		pipe.SAdd(ctx, runtimeIndexKey(), id)
 	}
-	pipe.Set(ctx, snapshotKey(snapshot.AccessInstanceID), mustJSON(snapshot), 0)
 	_, err = pipe.Exec(ctx)
 	return err
 }
@@ -113,4 +140,3 @@ func formatTime(value time.Time) string {
 	}
 	return value.UTC().Format(time.RFC3339Nano)
 }
-func mustJSON(value any) string { encoded, _ := json.Marshal(value); return string(encoded) }

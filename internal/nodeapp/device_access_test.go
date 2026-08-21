@@ -85,10 +85,10 @@ func TestAccessClientDecodesOfflineEventWithoutExpiresAt(t *testing.T) {
 
 func TestDeviceAPIDoesNotLeakCredentials(t *testing.T) {
 	stub := &endpointStub{device: Device{ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", DeviceAccessID: "34020000001320000001", DeviceName: "东门摄像机", Manufacturer: "海康威视", DeviceType: DeviceTypeIPC, SIPUsername: "34020000001320000001", SIPRealm: "3402000000", DigestAlgorithm: "MD5", Enabled: true, ProfileVersion: 1, AccessSyncStatus: "pending", CreatedAt: time.Now(), UpdatedAt: time.Now()}}
-	server := httptest.NewServer(NewHandler(func(context.Context) error { return nil }, func(context.Context) error { return nil }, time.Second, http.NotFoundHandler(), stub))
+	server := httptest.NewServer(NewConsoleHandler(func(context.Context) error { return nil }, func(context.Context) error { return nil }, time.Second, http.NotFoundHandler(), ConsoleDeps{Devices: stub}))
 	defer server.Close()
 	body := `{"center_code":"34020000","device_type":"132","device_name":"东门摄像机","manufacturer":"海康威视","sip_realm":"3402000000","password":"super-secret","enabled":true}`
-	response, err := http.Post(server.URL+"/internal/v1/devices", "application/json", strings.NewReader(body))
+	response, err := http.Post(server.URL+"/api/v1/devices", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}

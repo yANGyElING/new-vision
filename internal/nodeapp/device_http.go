@@ -13,6 +13,7 @@ const maxDeviceRequestBytes = 64 << 10
 
 type RuntimeReader interface {
 	Get(context.Context, string) (*RuntimeState, error)
+	GetMany(context.Context, []string) (map[string]*RuntimeState, error)
 }
 
 type RuntimeRemover interface {
@@ -82,12 +83,16 @@ func (m *DeviceManager) List(ctx context.Context) ([]Device, error) {
 		return nil, err
 	}
 	if m.runtime != nil {
+		ids := make([]string, len(devices))
 		for i := range devices {
-			runtime, getErr := m.runtime.Get(ctx, devices[i].ID)
-			if getErr != nil {
-				return nil, getErr
-			}
-			devices[i].Runtime = runtime
+			ids[i] = devices[i].ID
+		}
+		states, getErr := m.runtime.GetMany(ctx, ids)
+		if getErr != nil {
+			return nil, getErr
+		}
+		for i := range devices {
+			devices[i].Runtime = states[devices[i].ID]
 		}
 	}
 	return devices, nil
@@ -110,48 +115,6 @@ type DeviceEndpoints interface {
 	UpdateMeta(context.Context, string, *string, *string) (Device, error)
 	List(context.Context) ([]Device, error)
 	Delete(context.Context, string) error
-}
-
-func registerDeviceRoutes(mux *http.ServeMux, service DeviceEndpoints) {
-	mux.HandleFunc("POST /internal/v1/devices", func(w http.ResponseWriter, r *http.Request) {
-		request, ok := decodeCreateDeviceBody(w, r)
-		if !ok {
-			return
-		}
-		device, err := service.Create(r.Context(), request)
-		if err != nil {
-			writeDeviceError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusCreated, device)
-	})
-	mux.HandleFunc("GET /internal/v1/devices/{id}", func(w http.ResponseWriter, r *http.Request) {
-		device, err := service.Get(r.Context(), r.PathValue("id"))
-		if err != nil {
-			writeDeviceError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, device)
-	})
-	mux.HandleFunc("PATCH /internal/v1/devices/{id}", func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			Enabled *bool `json:"enabled"`
-		}
-		if err := decodeJSONBody(w, r, &request); err != nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
-			return
-		}
-		if request.Enabled == nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid_request", "enabled is required")
-			return
-		}
-		device, err := service.SetEnabled(r.Context(), r.PathValue("id"), *request.Enabled)
-		if err != nil {
-			writeDeviceError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, device)
-	})
 }
 
 func registerPublicDeviceRoutes(mux *http.ServeMux, service DeviceEndpoints) {

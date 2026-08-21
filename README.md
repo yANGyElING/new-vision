@@ -68,7 +68,7 @@ docker compose ps
 - `POST /api/v1/access/ack`：确认事件（`{"through_sequence": n}`）。
 - `POST /api/v1/test/sip/register` / `/keepalive` / `/unregister`：测试专用 SIP 模拟器（REGISTER+Digest、GB28181 KeepAlive MESSAGE、`Expires: 0` 注销），目标由 `NV_SIP_HOST`/`NV_SIP_PORT` 指定（默认 `node-access:5060`）。
 
-原有内部设备 API `POST/GET/PATCH /internal/v1/devices` 保持不变，`/internal/` 仍被 reverse-proxy 屏蔽。
+设备操作统一走上述 `/api/v1/devices` API（内部 `/internal/v1/devices` 路由已移除）；`/internal/` 路径仍由 reverse-proxy 统一返回 404，作为防御纵深。
 
 ## 健康检查
 
