@@ -55,6 +55,9 @@ func (s *endpointStub) Get(context.Context, string) (Device, error) { return s.d
 func (s *endpointStub) SetEnabled(context.Context, string, bool) (Device, error) {
 	return s.device, nil
 }
+func (s *endpointStub) UpdateMeta(context.Context, string, *string, *string) (Device, error) {
+	return s.device, nil
+}
 func (s *endpointStub) List(context.Context) ([]Device, error) { return []Device{s.device}, nil }
 func (s *endpointStub) Delete(context.Context, string) error   { return nil }
 

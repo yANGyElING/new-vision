@@ -72,6 +72,10 @@ func (m *DeviceManager) SetEnabled(ctx context.Context, id string, enabled bool)
 	return m.repository.SetEnabled(ctx, id, enabled)
 }
 
+func (m *DeviceManager) UpdateMeta(ctx context.Context, id string, name, manufacturer *string) (Device, error) {
+	return m.repository.UpdateMeta(ctx, id, name, manufacturer)
+}
+
 func (m *DeviceManager) List(ctx context.Context) ([]Device, error) {
 	devices, err := m.repository.List(ctx)
 	if err != nil {
@@ -103,6 +107,7 @@ type DeviceEndpoints interface {
 	Create(context.Context, CreateDeviceInput) (Device, error)
 	Get(context.Context, string) (Device, error)
 	SetEnabled(context.Context, string, bool) (Device, error)
+	UpdateMeta(context.Context, string, *string, *string) (Device, error)
 	List(context.Context) ([]Device, error)
 	Delete(context.Context, string) error
 }
@@ -180,17 +185,37 @@ func registerPublicDeviceRoutes(mux *http.ServeMux, service DeviceEndpoints) {
 	})
 	mux.HandleFunc("PATCH /api/v1/devices/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
-			Enabled *bool `json:"enabled"`
+			Enabled      *bool   `json:"enabled"`
+			DeviceName   *string `json:"device_name"`
+			Manufacturer *string `json:"manufacturer"`
 		}
 		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
-		if request.Enabled == nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid_request", "enabled is required")
+		if request.Enabled == nil && request.DeviceName == nil && request.Manufacturer == nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "at least one of enabled, device_name, manufacturer is required")
 			return
 		}
-		device, err := service.SetEnabled(r.Context(), r.PathValue("id"), *request.Enabled)
+		id := r.PathValue("id")
+		if request.Enabled != nil {
+			device, err := service.SetEnabled(r.Context(), id, *request.Enabled)
+			if err != nil {
+				writeDeviceError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, device)
+			return
+		}
+		if request.DeviceName != nil && *request.DeviceName == "" {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "device_name must be non-empty")
+			return
+		}
+		if request.Manufacturer != nil && *request.Manufacturer == "" {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "manufacturer must be non-empty")
+			return
+		}
+		device, err := service.UpdateMeta(r.Context(), id, request.DeviceName, request.Manufacturer)
 		if err != nil {
 			writeDeviceError(w, err)
 			return

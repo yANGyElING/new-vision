@@ -25,6 +25,9 @@ func (r *syncRepo) Create(context.Context, CreateDeviceInput) (Device, error) {
 }
 func (r *syncRepo) Get(context.Context, string) (Device, error)              { return r.device, nil }
 func (r *syncRepo) SetEnabled(context.Context, string, bool) (Device, error) { return r.device, nil }
+func (r *syncRepo) UpdateMeta(context.Context, string, *string, *string) (Device, error) {
+	return r.device, nil
+}
 func (r *syncRepo) GetByAccessID(context.Context, string) (Device, error)    { return r.device, nil }
 func (r *syncRepo) List(context.Context) ([]Device, error) {
 	if r.listed != nil {

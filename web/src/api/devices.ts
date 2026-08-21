@@ -68,6 +68,10 @@ export function setDeviceEnabled(id: string, enabled: boolean): Promise<Device> 
   return request(`/api/v1/devices/${id}`, { method: 'PATCH', body: JSON.stringify({ enabled }) })
 }
 
+export function updateDeviceMeta(id: string, data: { device_name?: string; manufacturer?: string }): Promise<Device> {
+  return request(`/api/v1/devices/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+}
+
 export function deleteDevice(id: string): Promise<void> {
   return request(`/api/v1/devices/${id}`, { method: 'DELETE' })
 }

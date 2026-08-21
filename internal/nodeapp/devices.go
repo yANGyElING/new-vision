@@ -126,6 +126,7 @@ type DeviceRepository interface {
 	Create(context.Context, CreateDeviceInput) (Device, error)
 	Get(context.Context, string) (Device, error)
 	SetEnabled(context.Context, string, bool) (Device, error)
+	UpdateMeta(context.Context, string, *string, *string) (Device, error)
 	GetByAccessID(context.Context, string) (Device, error)
 	List(context.Context) ([]Device, error)
 	NextPending(context.Context) (Device, bool, error)
@@ -257,6 +258,44 @@ func (r *PostgresDeviceRepository) SetEnabled(ctx context.Context, id string, en
 		return Device{}, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO access_profile_outbox (device_id, profile_version) VALUES ($1,$2)`, d.ID, d.ProfileVersion); err != nil {
+		return Device{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Device{}, err
+	}
+	return d, nil
+}
+
+func (r *PostgresDeviceRepository) UpdateMeta(ctx context.Context, id string, name, manufacturer *string) (Device, error) {
+	if !uuidPattern.MatchString(id) {
+		return Device{}, ErrNotFound
+	}
+	if name == nil && manufacturer == nil {
+		return Device{}, fmt.Errorf("%w: no fields to update", ErrInvalid)
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Device{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	d, err := scanDevice(tx.QueryRow(ctx, `SELECT `+deviceColumns+` FROM devices WHERE id=$1 FOR UPDATE`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Device{}, ErrNotFound
+	}
+	if err != nil {
+		return Device{}, err
+	}
+	// Metadata changes do NOT touch profile_version or the outbox: they are
+	// management-only fields and are never synced to the access layer.
+	if name != nil {
+		d.DeviceName = *name
+	}
+	if manufacturer != nil {
+		d.Manufacturer = *manufacturer
+	}
+	d, err = scanDevice(tx.QueryRow(ctx, `UPDATE devices SET device_name=$2, manufacturer=$3, updated_at=now()
+ WHERE id=$1 RETURNING `+deviceColumns, id, d.DeviceName, d.Manufacturer))
+	if err != nil {
 		return Device{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {

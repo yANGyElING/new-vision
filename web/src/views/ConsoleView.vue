@@ -332,6 +332,7 @@ onUnmounted(() => activeHealthController?.abort())
         <span>new-vision · 测试控制台</span>
       </RouterLink>
       <nav aria-label="主导航">
+        <RouterLink class="nav-link" to="/devices">设备管理</RouterLink>
         <span class="test-notice"><Zap :size="14" />测试专用界面，生产前需启用认证</span>
       </nav>
     </header>
