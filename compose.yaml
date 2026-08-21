@@ -40,7 +40,7 @@ services:
       context: .
       dockerfile: deploy/node-app/Dockerfile
       args:
-        GOPROXY: ${NV_GOPROXY:-https://proxy.golang.org,direct}
+        GOPROXY: ${NV_GOPROXY:-https://goproxy.cn,direct}
     environment:
       NV_HTTP_ADDR: ${NV_HTTP_ADDR}
       NV_LOG_LEVEL: ${NV_LOG_LEVEL}
