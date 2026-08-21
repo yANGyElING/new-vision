@@ -23,7 +23,7 @@ services:
       NV_REDIS_PASSWORD: ${NV_REDIS_PASSWORD}
       NV_REDIS_NODEAPP_PASSWORD: ${NV_REDIS_NODEAPP_PASSWORD}
       NV_REDIS_ACCESS_PASSWORD: ${NV_REDIS_ACCESS_PASSWORD}
-    command: ["sh", "-c", 'exec redis-server --save "" --appendonly yes --appendfsync everysec --user default off --user admin on ">$$NV_REDIS_PASSWORD" ~* +@all --user nodeapp on ">$$NV_REDIS_NODEAPP_PASSWORD" ~nv:nodeapp:v1:* +ping +hgetall +hset +del +set +multi +exec +sadd +smembers -flushdb -flushall --user access on ">$$NV_REDIS_ACCESS_PASSWORD" ~nv:access:v1:* +ping +get +set +del +hget +hgetall +hset +hdel +incr +xadd +xrange +xtrim +multi +exec +discard +watch +unwatch +sadd +smembers +srem -flushdb -flushall']
+    command: ["sh", "-c", 'exec redis-server --save "" --appendonly yes --appendfsync everysec --user default off --user admin on ">$$NV_REDIS_PASSWORD" ~* +@all --user nodeapp on ">$$NV_REDIS_NODEAPP_PASSWORD" ~nv:nodeapp:v1:* +ping +hgetall +hset +del +set +multi +exec +sadd +smembers +srem -flushdb -flushall --user access on ">$$NV_REDIS_ACCESS_PASSWORD" ~nv:access:v1:* +ping +get +set +del +hget +hgetall +hset +hdel +incr +xadd +xrange +xtrim +multi +exec +discard +watch +unwatch +sadd +smembers +srem -flushdb -flushall']
     volumes:
       - redis-data:/data
     healthcheck:
