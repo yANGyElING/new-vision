@@ -7,7 +7,7 @@
 已验证：
 
 - Go `go1.26.5 windows/amd64`、Node `v22.23.2`、npm `10.9.8`、Docker CLI `29.7.2`、Compose `v5.4.0` 已安装。
-- Go 测试、静态检查、两个入口构建、前端 `npm ci`、类型检查和生产构建通过。
+- Go 测试、静态检查、node-app 入口构建、前端 `npm ci`、类型检查和生产构建通过。
 - `docker compose --env-file .env.example config --quiet` 通过。
 - ZLMediaKit 使用官方 `zlmediakit/zlmediakit:master` 的固定 OCI manifest digest，并已核对 Linux/amd64 子 manifest。
 

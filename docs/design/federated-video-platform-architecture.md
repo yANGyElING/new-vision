@@ -703,7 +703,7 @@ Rust和Supabase不是当前已确定的技术选型。Rust可以作为未来特�
 └── go.sum
 ```
 
-当前 `cmd/node-access`（Go）与 `internal/nodeaccess`（Go）仅剩 HTTP 健康检查/指标骨架，无 SIP/GB28181/Redis/跨进程 API，已无目标角色；阶段一首个切片完成后不再保留 Go Access 运行进程与适配器。当前不创建 `api/access/v1`、`api/federation/v1`、`cmd/center-app`、`internal/centerapp`、业务能力空包或 `tests/system`。这些目录只有在对应真实代码、协议或测试场景出现时才创建。
+Go `cmd/node-access` 与 `internal/nodeaccess` 残留骨架已移除，仓库中不再存在无目标角色的 Go Access 运行进程；node-access 运行进程唯一是 Kamailio 6.1.3 + 自定义 gb28181 模块。当前不创建 `api/access/v1`、`api/federation/v1`、`cmd/center-app`、`internal/centerapp`、业务能力空包或 `tests/system`。这些目录只有在对应真实代码、协议或测试场景出现时才创建。
 
 #### 12.1.2 演进蓝图
 
@@ -879,7 +879,6 @@ internal/nodeapp/
 
 - `node-web` 不需要独立发布或扩缩容时，将前端静态文件并入统一reverse proxy，减少一层Nginx和一个常驻容器；
 - 本地 `npm run dev` 需要联调Go API时，为Vite增加 `/api` 开发代理；
-- 移除 Go `cmd/node-access` 与 `internal/nodeaccess` 残留骨架，确保仓库中不再存在无目标角色的 Go Access 运行进程；
 - 当前 `node-access`（Kamailio）和ZLMediaKit继续作为阶段一默认启动骨架；
 - 只有单Node需要多个Access实例或稳定SIP入口时才引入多 Kamailio 入口池与 L4 VIP。
 
