@@ -1,12 +1,13 @@
 // e2e verification of the deployed auth system.
-// usage: NV_E2E_BASE=http://host:8080 NV_E2E_ADMIN_PASSWORD=... node deploy/.e2e-test.mjs
+// usage: NV_E2E_BASE=http://host:8080 NV_E2E_ADMIN_PASSWORD=... [NV_E2E_ADMIN_USERNAME=admin] node deploy/.e2e-test.mjs
 const BASE = process.env.NV_E2E_BASE ?? 'http://106.52.72.48:8080'
+const ADMIN_USERNAME = process.env.NV_E2E_ADMIN_USERNAME ?? 'admin'
 const ADMIN_PASSWORD = process.env.NV_E2E_ADMIN_PASSWORD
 if (!ADMIN_PASSWORD) {
   console.error('set NV_E2E_ADMIN_PASSWORD (the seeded admin password from the server env file)')
   process.exit(1)
 }
-const ADMIN = { tenant: 'default', username: 'admin', password: ADMIN_PASSWORD }
+const ADMIN = { tenant: 'default', username: ADMIN_USERNAME, password: ADMIN_PASSWORD }
 // unique per-run suffix so the suite is re-runnable against live data
 const S = Date.now().toString(36)
 const NAME = { region: `e2e-region-${S}`, viewer: `e2e-viewer-${S}`, tenant: `e2e-tenant-${S}`, cross: `e2e-op-${S}`, device: `e2e-device-${S}` }
@@ -44,7 +45,7 @@ const badLogin = await api('POST', '/api/v1/auth/login', { body: { ...ADMIN, pas
 report('wrong password -> 401 uniform message', badLogin.status === 401 && badLogin.json?.error?.message === 'invalid tenant or credentials', `status=${badLogin.status} msg=${badLogin.json?.error?.message}`)
 
 const meRes = await api('GET', '/api/v1/auth/me', { token: adminToken })
-report('GET /auth/me -> admin + node_admin', meRes.status === 200 && meRes.json?.user?.username === 'admin' && meRes.json?.roles?.includes('node_admin'), `roles=${JSON.stringify(meRes.json?.roles)}`)
+report('GET /auth/me -> node_admin account', meRes.status === 200 && meRes.json?.user?.username === ADMIN_USERNAME && meRes.json?.roles?.includes('node_admin'), `roles=${JSON.stringify(meRes.json?.roles)}`)
 
 const noAuth = await api('GET', '/api/v1/users')
 report('no token -> 401', noAuth.status === 401, `status=${noAuth.status}`)
