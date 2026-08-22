@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
-  AlertTriangle, Building2, Check, ChevronLeft, ChevronRight, Edit3, Eye, EyeOff,
+  AlertTriangle, Building2, Check, ChevronDown, ChevronLeft, ChevronRight, Edit3, Eye, EyeOff,
   KeyRound, Monitor, Pause, Play, RefreshCw, Search, ShieldCheck, UserPlus, Users, X,
 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
@@ -184,6 +184,7 @@ function openUserCreate() {
   }
   passwordVisible.value = false
   userFormError.value = ''
+  closeAllPopovers()
   userModalOpen.value = true
 }
 
@@ -201,12 +202,14 @@ function openUserEdit(user: IdentityUser) {
   }
   passwordVisible.value = false
   userFormError.value = ''
+  closeAllPopovers()
   userModalOpen.value = true
 }
 
 function closeUserModal() {
   userModalOpen.value = false
   userFormError.value = ''
+  closeAllPopovers()
 }
 
 // The role matrix is cumulative (viewer ⊂ operator ⊂ tenant_admin ⊂
@@ -224,6 +227,70 @@ const currentRole = computed(() => {
 function pickRole(role: string) {
   userForm.value.roles = role ? [role] : []
 }
+
+// ---------- comboboxes (Notion style: search-in-popover, no create) ----------
+const roleOpen = ref(false)
+const roleQuery = ref('')
+const roleSearchEl = ref<HTMLInputElement | null>(null)
+const tenantOpen = ref(false)
+const statusOpen = ref(false)
+const regionOpen = ref(false)
+const regionQuery = ref('')
+const regionSearchEl = ref<HTMLInputElement | null>(null)
+
+const STATUS_OPTIONS: { value: 'active' | 'disabled'; label: string }[] = [
+  { value: 'active', label: '启用' },
+  { value: 'disabled', label: '停用' },
+]
+
+const roleOptions = computed(() => [
+  { value: '', label: '暂不分配', hint: '用户可登录，暂无功能权限' },
+  ...availableRoles.value.map((r) => ({ value: r, label: roleLabel(r), hint: roleHint(r) })),
+])
+
+const filteredRoles = computed(() => {
+  const q = roleQuery.value.trim().toLowerCase()
+  if (!q) return roleOptions.value
+  return roleOptions.value.filter((o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q))
+})
+
+const filteredRegions = computed(() => {
+  const q = regionQuery.value.trim().toLowerCase()
+  if (!q) return flatRegions.value
+  return flatRegions.value.filter((f) => f.region.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q))
+})
+
+function regionNameOf(id: string): string {
+  return flatRegions.value.find((f) => f.region.id === id)?.region.name ?? id
+}
+
+function tenantLabel(id: string): string {
+  return tenantNameByID.value.get(id) ?? id
+}
+
+function closeAllPopovers() {
+  roleOpen.value = false
+  tenantOpen.value = false
+  statusOpen.value = false
+  regionOpen.value = false
+  roleQuery.value = ''
+  regionQuery.value = ''
+}
+
+function pickFirstRole() {
+  const first = filteredRoles.value[0]
+  if (first) {
+    pickRole(first.value)
+    roleOpen.value = false
+  }
+}
+
+watch(roleOpen, async (open) => {
+  if (open) { await nextTick(); roleSearchEl.value?.focus() } else roleQuery.value = ''
+})
+watch(regionOpen, async (open) => {
+  if (open) { await nextTick(); regionSearchEl.value?.focus() } else regionQuery.value = ''
+})
 
 function toggleRegionScope(id: string) {
   const ids = userForm.value.region_ids
@@ -370,6 +437,7 @@ function formatDate(iso: string): string {
 let healthTimer = 0
 
 onMounted(() => {
+  document.addEventListener('click', closeAllPopovers)
   void refreshHealth()
   healthTimer = window.setInterval(refreshHealth, 30000)
   void (async () => {
@@ -390,6 +458,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('click', closeAllPopovers)
   window.clearInterval(healthTimer)
 })
 </script>
@@ -608,92 +677,138 @@ onUnmounted(() => {
       <span class="cg-footer-deps"><ShieldCheck :size="13" />Casbin RBAC · 角色变更实时生效</span>
     </footer>
 
-    <!-- ============ user create / edit modal ============ -->
+    <!-- ============ user create / edit modal (Notion style) ============ -->
     <Teleport to="body">
       <Transition name="modal">
         <div v-if="userModalOpen" class="cg-overlay" @click.self="closeUserModal">
-          <div class="cg-modal" role="dialog" aria-modal="true" :aria-label="userModalMode === 'create' ? '新增用户' : '编辑用户'">
-            <div class="cg-modal-head">
-              <h2>{{ userModalMode === 'create' ? '新增用户' : `编辑用户` }}<span v-if="userModalMode === 'edit'" class="cg-user-badge">{{ userForm.username }}</span></h2>
-              <button class="cg-icon-btn" type="button" aria-label="关闭" @click="closeUserModal"><X :size="16" /></button>
+          <div class="nt-modal" role="dialog" aria-modal="true" :aria-label="userModalMode === 'create' ? '新增用户' : '编辑用户'">
+            <div class="nt-modal-head">
+              <div>
+                <h2>{{ userModalMode === 'create' ? '新增用户' : '编辑用户' }}</h2>
+                <p class="nt-sub">{{ userModalMode === 'create' ? '创建后可随时调整角色与数据范围' : `调整 ${userForm.username} 的账号信息与权限` }}</p>
+              </div>
+              <button class="nt-x" type="button" aria-label="关闭" @click="closeUserModal"><X :size="15" /></button>
             </div>
-            <form class="cg-form" @submit.prevent="submitUserForm">
-              <div class="cg-form-grid">
-                <div v-if="userModalMode === 'create'" class="cg-field">
-                  <label for="usr-username">用户名</label>
-                  <input id="usr-username" v-model="userForm.username" required maxlength="64" autocomplete="off" placeholder="登录用户名" />
-                </div>
-                <div v-if="userModalMode === 'create' && tenants.length > 1" class="cg-field">
-                  <label for="usr-tenant">所属租户</label>
-                  <select id="usr-tenant" v-model="userForm.tenant_id" class="cg-select-full">
-                    <option v-for="t in tenants" :key="t.id" :value="t.id">{{ t.name }}</option>
-                  </select>
-                </div>
-                <div class="cg-field" :class="{ 'cg-field-full': userModalMode === 'edit' }">
-                  <label for="usr-display">显示名</label>
-                  <input id="usr-display" v-model="userForm.display_name" maxlength="255" placeholder="如：张三（运维）" />
-                </div>
-                <div v-if="userModalMode === 'edit'" class="cg-field">
-                  <label for="usr-status">账号状态</label>
-                  <select id="usr-status" v-model="userForm.status" class="cg-select-full">
-                    <option value="active">启用</option>
-                    <option value="disabled">停用</option>
-                  </select>
-                </div>
-                <div v-if="userModalMode === 'create'" class="cg-field cg-field-full">
-                  <label for="usr-password">初始密码</label>
-                  <div class="cg-input-wrap">
-                    <input
-                      id="usr-password" v-model="userForm.password"
-                      :type="passwordVisible ? 'text' : 'password'"
-                      required maxlength="256" autocomplete="new-password" placeholder="至少 1 位，建议使用生成器"
-                    />
-                    <button class="cg-inset-btn" type="button" :aria-label="passwordVisible ? '隐藏密码' : '显示密码'" :title="passwordVisible ? '隐藏密码' : '显示密码'" @click="passwordVisible = !passwordVisible">
-                      <Eye v-if="passwordVisible" :size="15" /><EyeOff v-else :size="15" />
-                    </button>
-                    <button class="cg-inset-btn far" type="button" aria-label="生成随机密码" title="生成随机密码" @click="generatePassword"><KeyRound :size="15" /></button>
-                  </div>
-                </div>
-                <div class="cg-divider" aria-hidden="true"><span>权限配置 · 可不选，创建后随时调整</span></div>
-                <div class="cg-field cg-field-full">
-                  <span class="cg-field-label">角色</span>
-                  <div class="cg-role-row" role="radiogroup" aria-label="角色选择">
-                    <label class="cg-role-pill" :class="{ on: currentRole === '' }">
-                      <input type="radio" name="usr-role" value="" :checked="currentRole === ''" @change="pickRole('')" />
-                      暂不分配
-                    </label>
-                    <label
-                      v-for="role in availableRoles" :key="role" class="cg-role-pill"
-                      :class="{ on: currentRole === role }"
-                    >
-                      <input type="radio" name="usr-role" :value="role" :checked="currentRole === role" @change="pickRole(role)" />
-                      {{ roleLabel(role) }}
-                    </label>
-                  </div>
-                  <span class="cg-hint">{{ currentRole ? roleHint(currentRole) : '暂不分配：用户可登录，但暂时没有任何功能与数据权限。' }}</span>
-                </div>
-                <div class="cg-field cg-field-full">
-                  <span class="cg-field-label">区域范围（数据权限，可多选）</span>
-                  <div v-if="flatRegions.length > 0" class="cg-region-picker" role="group" aria-label="区域范围选择">
-                    <label
-                      v-for="flat in flatRegions" :key="flat.region.id" class="cg-region"
-                      :style="{ paddingLeft: `${flat.depth * 20 + 12}px` }"
-                    >
-                      <input type="checkbox" :checked="userForm.region_ids.includes(flat.region.id)" @change="toggleRegionScope(flat.region.id)" />
-                      <span class="cg-region-name">{{ flat.region.name }}</span>
-                      <span class="cg-region-path">{{ flat.path }}</span>
-                    </label>
-                  </div>
-                  <p v-else class="cg-hint">暂无区域可分配，可先在「组织架构」页创建。</p>
-                  <span v-if="flatRegions.length > 0" class="cg-hint">勾选父区域即覆盖其整个子树；不选则该用户看不到任何设备。</span>
+            <form class="nt-form" @submit.prevent="submitUserForm" @click.stop>
+              <div v-if="userModalMode === 'create'" class="nt-row">
+                <div class="nt-label">用户名</div>
+                <div class="nt-ctrl">
+                  <input id="usr-username" v-model="userForm.username" class="nt-input" aria-label="用户名" required maxlength="64" autocomplete="off" placeholder="登录用户名">
                 </div>
               </div>
-              <p v-if="userFormError" class="cg-alert slim" role="alert">{{ userFormError }}</p>
-              <div class="cg-modal-actions">
-                <button class="cg-btn-quiet" type="button" @click="closeUserModal">取消</button>
-                <button class="cg-btn-primary" type="submit" :disabled="userSaving">
-                  <Check :size="16" />{{ userSaving ? '保存中…' : userModalMode === 'create' ? '创建用户' : '保存修改' }}
-                </button>
+
+              <div v-if="userModalMode === 'create' && tenants.length > 1" class="nt-row">
+                <div class="nt-label">所属租户</div>
+                <div class="nt-ctrl">
+                  <button type="button" class="nt-combo" :class="{ open: tenantOpen }" aria-haspopup="listbox" :aria-expanded="tenantOpen" @click.stop="closeAllPopovers(); tenantOpen = !tenantOpen">
+                    <span class="nt-val">{{ tenantLabel(userForm.tenant_id) }}</span>
+                    <ChevronDown :size="13" />
+                  </button>
+                  <Transition name="ntpop">
+                    <div v-if="tenantOpen" class="nt-pop" @click.stop>
+                      <div class="nt-list" role="listbox">
+                        <button v-for="t in tenants" :key="t.id" type="button" role="option" class="nt-opt" :class="{ sel: userForm.tenant_id === t.id }" @click="userForm.tenant_id = t.id; tenantOpen = false">
+                          <Check :size="14" class="nt-ck" />{{ t.name }}
+                        </button>
+                      </div>
+                    </div>
+                  </Transition>
+                </div>
+              </div>
+
+              <div class="nt-row">
+                <div class="nt-label">显示名</div>
+                <div class="nt-ctrl">
+                  <input id="usr-display" v-model="userForm.display_name" class="nt-input" aria-label="显示名" maxlength="255" placeholder="选填">
+                </div>
+              </div>
+
+              <div v-if="userModalMode === 'edit'" class="nt-row">
+                <div class="nt-label">账号状态</div>
+                <div class="nt-ctrl">
+                  <button type="button" class="nt-combo" :class="{ open: statusOpen }" aria-haspopup="listbox" :aria-expanded="statusOpen" @click.stop="closeAllPopovers(); statusOpen = !statusOpen">
+                    <span class="nt-val">{{ userForm.status === 'active' ? '启用' : '停用' }}</span>
+                    <ChevronDown :size="13" />
+                  </button>
+                  <Transition name="ntpop">
+                    <div v-if="statusOpen" class="nt-pop" @click.stop>
+                      <div class="nt-list" role="listbox">
+                        <button v-for="s in STATUS_OPTIONS" :key="s.value" type="button" role="option" class="nt-opt" :class="{ sel: userForm.status === s.value }" @click="userForm.status = s.value; statusOpen = false">
+                          <Check :size="14" class="nt-ck" />{{ s.label }}
+                        </button>
+                      </div>
+                    </div>
+                  </Transition>
+                </div>
+              </div>
+
+              <div v-if="userModalMode === 'create'" class="nt-row">
+                <div class="nt-label">初始密码</div>
+                <div class="nt-ctrl nt-pw">
+                  <input id="usr-password" v-model="userForm.password" class="nt-input" aria-label="初始密码" :type="passwordVisible ? 'text' : 'password'" required maxlength="256" autocomplete="new-password" placeholder="点击右侧钥匙生成">
+                  <button class="nt-ib eye" type="button" :aria-label="passwordVisible ? '隐藏密码' : '显示密码'" :title="passwordVisible ? '隐藏密码' : '显示密码'" @click="passwordVisible = !passwordVisible">
+                    <Eye v-if="passwordVisible" :size="14" /><EyeOff v-else :size="14" />
+                  </button>
+                  <button class="nt-ib gen" type="button" aria-label="生成随机密码" title="生成随机密码" @click="generatePassword"><KeyRound :size="14" /></button>
+                </div>
+              </div>
+
+              <div class="nt-row">
+                <div class="nt-label">角色</div>
+                <div class="nt-ctrl">
+                  <button type="button" class="nt-combo" :class="{ open: roleOpen }" aria-haspopup="listbox" :aria-expanded="roleOpen" @click.stop="closeAllPopovers(); roleOpen = !roleOpen">
+                    <span class="nt-val">{{ currentRole ? roleLabel(currentRole) : '暂不分配' }}</span>
+                    <ChevronDown :size="13" />
+                  </button>
+                  <Transition name="ntpop">
+                    <div v-if="roleOpen" class="nt-pop" @click.stop>
+                      <div class="nt-search">
+                        <Search :size="13" />
+                        <input v-model="roleQuery" aria-label="搜索角色" placeholder="搜索角色…" @keydown.enter.prevent="pickFirstRole" @keydown.esc="roleOpen = false">
+                      </div>
+                      <div class="nt-list" role="listbox">
+                        <button v-for="o in filteredRoles" :key="o.value || 'none'" type="button" role="option" class="nt-opt" :class="{ sel: currentRole === o.value }" @click="pickRole(o.value); roleOpen = false">
+                          <Check :size="14" class="nt-ck" />{{ o.label }}<span class="nt-opt-hint">{{ o.hint }}</span>
+                        </button>
+                        <div v-if="filteredRoles.length === 0" class="nt-empty">无匹配角色</div>
+                      </div>
+                    </div>
+                  </Transition>
+                </div>
+              </div>
+
+              <div class="nt-row">
+                <div class="nt-label">区域范围</div>
+                <div class="nt-ctrl">
+                  <div class="nt-multi" :class="{ open: regionOpen }" role="button" tabindex="0" aria-haspopup="listbox" :aria-expanded="regionOpen" @click.stop="closeAllPopovers(); regionOpen = !regionOpen" @keydown.enter.prevent="closeAllPopovers(); regionOpen = !regionOpen">
+                    <span v-for="id in userForm.region_ids" :key="id" class="nt-chip">
+                      {{ regionNameOf(id) }}
+                      <button type="button" :aria-label="`移除 ${regionNameOf(id)}`" @click.stop="toggleRegionScope(id)"><X :size="10" /></button>
+                    </span>
+                    <span v-if="userForm.region_ids.length === 0" class="nt-ph">选择区域，可多选</span>
+                  </div>
+                  <Transition name="ntpop">
+                    <div v-if="regionOpen" class="nt-pop" @click.stop>
+                      <div class="nt-search">
+                        <Search :size="13" />
+                        <input v-model="regionQuery" aria-label="搜索区域" placeholder="搜索区域…" @keydown.esc="regionOpen = false">
+                      </div>
+                      <div class="nt-list" role="listbox">
+                        <button v-for="f in filteredRegions" :key="f.region.id" type="button" role="option" class="nt-opt" :class="{ sel: userForm.region_ids.includes(f.region.id) }" @click="toggleRegionScope(f.region.id)">
+                          <Check :size="14" class="nt-ck" />{{ f.region.name }}<span class="nt-opt-hint">{{ f.path }}</span>
+                        </button>
+                        <div v-if="filteredRegions.length === 0" class="nt-empty">无匹配区域</div>
+                      </div>
+                    </div>
+                  </Transition>
+                  <p v-if="flatRegions.length === 0" class="nt-note">暂无区域可分配，可先在「组织架构」页创建。</p>
+                </div>
+              </div>
+
+              <p v-if="userFormError" class="nt-error" role="alert">{{ userFormError }}</p>
+              <div class="nt-foot">
+                <button class="nt-btn ghost" type="button" @click="closeUserModal">取消</button>
+                <button class="nt-btn go" type="submit" :disabled="userSaving">{{ userSaving ? '保存中…' : userModalMode === 'create' ? '创建用户' : '保存修改' }}</button>
               </div>
             </form>
           </div>
@@ -701,37 +816,33 @@ onUnmounted(() => {
       </Transition>
     </Teleport>
 
-    <!-- ============ reset password modal ============ -->
+    <!-- ============ reset password modal (Notion style) ============ -->
     <Teleport to="body">
       <Transition name="modal">
         <div v-if="passwordModalUser" class="cg-overlay" @click.self="passwordModalUser = null">
-          <div class="cg-modal cg-modal-narrow" role="dialog" aria-modal="true" :aria-label="`重置 ${passwordModalUser.username} 的密码`">
-            <div class="cg-modal-head">
-              <h2>重置密码<span class="cg-user-badge">{{ passwordModalUser.username }}</span></h2>
-              <button class="cg-icon-btn" type="button" aria-label="关闭" @click="passwordModalUser = null"><X :size="16" /></button>
-            </div>
-            <form class="cg-form" @submit.prevent="submitPassword">
-              <div class="cg-field">
-                <label for="usr-new-password">新密码</label>
-                <div class="cg-input-wrap">
-                  <input
-                    id="usr-new-password" v-model="newPassword"
-                    :type="newPasswordVisible ? 'text' : 'password'"
-                    required maxlength="256" autocomplete="new-password" placeholder="至少 1 位，建议使用生成器"
-                  />
-                  <button class="cg-inset-btn" type="button" :aria-label="newPasswordVisible ? '隐藏密码' : '显示密码'" :title="newPasswordVisible ? '隐藏密码' : '显示密码'" @click="newPasswordVisible = !newPasswordVisible">
-                    <Eye v-if="newPasswordVisible" :size="15" /><EyeOff v-else :size="15" />
-                  </button>
-                  <button class="cg-inset-btn far" type="button" aria-label="生成随机密码" title="生成随机密码" @click="generateAdminPassword"><KeyRound :size="15" /></button>
-                </div>
-                <span class="cg-hint">重置后原密码立即失效，请将新密码安全地告知用户。</span>
+          <div class="nt-modal nt-modal-narrow" role="dialog" aria-modal="true" :aria-label="`重置 ${passwordModalUser.username} 的密码`">
+            <div class="nt-modal-head">
+              <div>
+                <h2>重置密码</h2>
+                <p class="nt-sub">{{ passwordModalUser.username }} · 重置后原密码立即失效</p>
               </div>
-              <p v-if="passwordError" class="cg-alert slim" role="alert">{{ passwordError }}</p>
-              <div class="cg-modal-actions">
-                <button class="cg-btn-quiet" type="button" @click="passwordModalUser = null">取消</button>
-                <button class="cg-btn-primary" type="submit" :disabled="passwordSaving">
-                  <KeyRound :size="16" />{{ passwordSaving ? '重置中…' : '重置密码' }}
-                </button>
+              <button class="nt-x" type="button" aria-label="关闭" @click="passwordModalUser = null"><X :size="15" /></button>
+            </div>
+            <form class="nt-form" @submit.prevent="submitPassword" @click.stop>
+              <div class="nt-row">
+                <div class="nt-label">新密码</div>
+                <div class="nt-ctrl nt-pw">
+                  <input id="usr-new-password" v-model="newPassword" class="nt-input" aria-label="新密码" :type="newPasswordVisible ? 'text' : 'password'" required maxlength="256" autocomplete="new-password" placeholder="点击右侧钥匙生成">
+                  <button class="nt-ib eye" type="button" :aria-label="newPasswordVisible ? '隐藏密码' : '显示密码'" :title="newPasswordVisible ? '隐藏密码' : '显示密码'" @click="newPasswordVisible = !newPasswordVisible">
+                    <Eye v-if="newPasswordVisible" :size="14" /><EyeOff v-else :size="14" />
+                  </button>
+                  <button class="nt-ib gen" type="button" aria-label="生成随机密码" title="生成随机密码" @click="generateAdminPassword"><KeyRound :size="14" /></button>
+                </div>
+              </div>
+              <p v-if="passwordError" class="nt-error" role="alert">{{ passwordError }}</p>
+              <div class="nt-foot">
+                <button class="nt-btn ghost" type="button" @click="passwordModalUser = null">取消</button>
+                <button class="nt-btn go" type="submit" :disabled="passwordSaving">{{ passwordSaving ? '重置中…' : '重置密码' }}</button>
               </div>
             </form>
           </div>
@@ -879,58 +990,81 @@ onUnmounted(() => {
 .cg-page-btns { display: flex; align-items: center; gap: 8px; }
 .cg-page-info { color: #5d6772; font-size: 12px; }
 
-/* =============== overlay / modal =============== */
-.cg-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(7,11,17,.5); backdrop-filter: blur(3px); }
-.cg-modal { width: 100%; max-width: 580px; max-height: 88vh; overflow-y: auto; background: #fff; border-radius: 20px; box-shadow: 0 30px 80px -16px rgba(4,9,18,.5), 0 4px 18px rgba(4,9,18,.2); }
-.cg-modal-narrow { max-width: 460px; }
-.cg-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid #f0f2f4; position: sticky; top: 0; background: #fff; z-index: 2; }
-.cg-modal-head h2 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -.01em; color: #10151b; display: flex; align-items: center; gap: 10px; }
-.cg-user-badge { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 10px; color: #454f5b; background: #f2f4f6; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
-.cg-form { padding: 22px 24px 24px; display: grid; gap: 16px; }
-.cg-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.cg-field { display: grid; gap: 7px; }
-.cg-field-full { grid-column: 1 / -1; }
-.cg-field label, .cg-field-label { font-size: 12.5px; font-weight: 700; color: #454f5b; }
-.cg-field input { width: 100%; height: 44px; padding: 0 13px; font: inherit; font-size: 14px; color: #10151b; background: #fff; border: 1px solid #c6ccd4; border-radius: 10px; box-sizing: border-box; transition: border-color .16s, box-shadow .16s; }
-.cg-field input::placeholder { color: #9aa3ad; }
-.cg-field input:hover { border-color: #a7aeb8; }
-.cg-field input:focus-visible { outline: none; border-color: #10151b; box-shadow: 0 0 0 4px rgba(16,21,27,.09); }
-.cg-select-full { width: 100%; height: 44px; padding: 0 12px; font: inherit; font-size: 14px; color: #10151b; background: #fff; border: 1px solid #c6ccd4; border-radius: 10px; cursor: pointer; transition: border-color .16s, box-shadow .16s; }
-.cg-select-full:hover { border-color: #a7aeb8; }
-.cg-select-full:focus-visible { outline: none; border-color: #10151b; box-shadow: 0 0 0 4px rgba(16,21,27,.09); }
-.cg-input-wrap { position: relative; }
-.cg-input-wrap input { padding-right: 92px; }
-.cg-inset-btn { position: absolute; right: 6px; top: 5px; display: grid; place-items: center; width: 34px; height: 34px; color: #97a0ab; background: none; border: 0; border-radius: 8px; cursor: pointer; transition: color .15s, background .15s; }
-.cg-inset-btn:hover { color: #2b333d; background: #f2f4f6; }
-.cg-inset-btn:focus-visible { outline: 2px solid #10151b; outline-offset: 1px; }
-.cg-inset-btn.far { right: 44px; }
-.cg-hint { margin: 0; color: #8b939d; font-size: 12px; }
-.cg-modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 4px; }
+/* =============== overlay =============== */
+.cg-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(15,15,15,.45); backdrop-filter: blur(3px); }
 
-/* =============== role selection =============== */
-.cg-divider { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; margin-top: 2px; color: #9aa3ad; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
-.cg-divider::after { content: ''; flex: 1; height: 1px; background: #eef0f3; }
-.cg-role-row { display: flex; flex-wrap: wrap; gap: 8px; }
-.cg-role-pill { position: relative; display: inline-flex; align-items: center; padding: 8px 15px; background: #fff; border: 1px solid #e3e6ea; border-radius: 999px; font-size: 13px; font-weight: 600; color: #454f5b; cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
-.cg-role-pill:hover { border-color: #a7aeb8; }
-.cg-role-pill:focus-within { outline: 2px solid #10151b; outline-offset: 1px; }
-.cg-role-pill.on { color: #fff; background: #0f141a; border-color: #0f141a; }
-.cg-role-pill input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+/* =============== modal (Notion style) =============== */
+.nt-modal { width: 100%; max-width: 620px; max-height: 88vh; overflow-y: auto; background: #fff; border: 1px solid #e9e9e7; border-radius: 10px; box-shadow: 0 24px 64px -16px rgba(15,15,15,.28), 0 4px 16px rgba(15,15,15,.08); }
+.nt-modal-narrow { max-width: 480px; }
+.nt-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 24px 28px 0; position: sticky; top: 0; background: #fff; z-index: 2; }
+.nt-modal-head h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em; color: #37352f; }
+.nt-sub { margin: 4px 0 0; font-size: 12.5px; color: #787774; }
+.nt-x { display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; color: #9b9a97; background: none; border: 0; border-radius: 6px; cursor: pointer; transition: color .12s, background .12s; }
+.nt-x:hover { color: #37352f; background: #f1f1ef; }
+.nt-form { padding: 20px 28px 24px; display: grid; gap: 18px; }
+.nt-row { display: flex; align-items: flex-start; gap: 18px; }
+.nt-label { flex: 0 0 120px; padding-top: 7px; font-size: 13.5px; font-weight: 500; color: #37352f; }
+.nt-ctrl { flex: 1; min-width: 0; position: relative; }
 
-/* =============== region picker =============== */
-.cg-region-picker { display: grid; gap: 1px; max-height: 216px; overflow-y: auto; padding: 5px; background: #fafbfc; border: 1px solid #eef0f3; border-radius: 12px; }
-.cg-region { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; font-size: 13px; cursor: pointer; }
-.cg-region:hover { background: #f2f4f6; }
-.cg-region:focus-within { outline: 2px solid #10151b; outline-offset: -2px; }
-.cg-region input { accent-color: #0f141a; margin: 0; flex-shrink: 0; width: 15px; height: 15px; }
-.cg-region-name { font-weight: 600; color: #10151b; white-space: nowrap; }
-.cg-region-path { color: #9aa3ad; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nt-input { width: 100%; height: 34px; padding: 0 10px; font: inherit; font-size: 13.5px; color: #37352f; background: #fff; border: 1px solid #e3e2e0; border-radius: 6px; box-sizing: border-box; transition: border-color .12s, box-shadow .12s; }
+.nt-input::placeholder { color: #b9b8b4; }
+.nt-input:hover { border-color: #d3d1cb; }
+.nt-input:focus-visible { outline: none; border-color: #b3d4f2; box-shadow: 0 0 0 3px rgba(35,131,226,.14); }
+.nt-pw { position: relative; }
+.nt-pw .nt-input { padding-right: 74px; }
+.nt-ib { position: absolute; top: 4px; display: grid; place-items: center; width: 26px; height: 26px; color: #9b9a97; background: none; border: 0; border-radius: 5px; cursor: pointer; transition: color .12s, background .12s; }
+.nt-ib:hover { color: #37352f; background: #f1f1ef; }
+.nt-ib:focus-visible { outline: 2px solid #37352f; outline-offset: 1px; }
+.nt-ib.eye { right: 5px; }
+.nt-ib.gen { right: 34px; }
+
+.nt-combo { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; height: 34px; padding: 0 8px 0 10px; font: inherit; font-size: 13.5px; color: #37352f; text-align: left; background: #fff; border: 1px solid #e3e2e0; border-radius: 6px; cursor: pointer; transition: border-color .12s, box-shadow .12s; }
+.nt-combo:hover { border-color: #d3d1cb; }
+.nt-combo.open { border-color: #b3d4f2; box-shadow: 0 0 0 3px rgba(35,131,226,.14); }
+.nt-combo:focus-visible { outline: none; border-color: #b3d4f2; box-shadow: 0 0 0 3px rgba(35,131,226,.14); }
+.nt-combo .nt-val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nt-combo svg { flex-shrink: 0; color: #9b9a97; }
+
+.nt-pop { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 5; background: #fff; border-radius: 6px; box-shadow: 0 0 0 1px rgba(15,15,15,.04), 0 3px 6px rgba(15,15,15,.1), 0 12px 28px -6px rgba(15,15,15,.18); }
+.nt-search { display: flex; align-items: center; gap: 7px; padding: 8px 10px; color: #9b9a97; border-bottom: 1px solid #f1f1ef; }
+.nt-search input { flex: 1; height: 28px; padding: 0 8px; font: inherit; font-size: 13px; color: #37352f; background: #f7f7f6; border: 0; border-radius: 5px; }
+.nt-search input:focus { outline: 2px solid rgba(35,131,226,.4); outline-offset: -1px; }
+.nt-search input::placeholder { color: #b9b8b4; }
+.nt-list { max-height: 216px; overflow-y: auto; padding: 5px; }
+.nt-opt { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; font: inherit; font-size: 13px; color: #37352f; text-align: left; background: none; border: 0; border-radius: 4px; cursor: pointer; }
+.nt-opt:hover { background: #f7f7f6; }
+.nt-opt .nt-ck { visibility: hidden; color: #2383e2; flex-shrink: 0; }
+.nt-opt.sel .nt-ck { visibility: visible; }
+.nt-opt-hint { margin-left: auto; flex-shrink: 0; font-size: 11px; color: #9b9a97; white-space: nowrap; }
+.nt-empty { padding: 12px 10px; font-size: 12px; color: #9b9a97; }
+
+.nt-multi { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; min-height: 34px; padding: 4px 8px; background: #fff; border: 1px solid #e3e2e0; border-radius: 6px; cursor: pointer; transition: border-color .12s, box-shadow .12s; }
+.nt-multi:hover { border-color: #d3d1cb; }
+.nt-multi.open { border-color: #b3d4f2; box-shadow: 0 0 0 3px rgba(35,131,226,.14); }
+.nt-multi:focus-visible { outline: none; border-color: #b3d4f2; box-shadow: 0 0 0 3px rgba(35,131,226,.14); }
+.nt-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 6px 2px 8px; font-size: 12px; color: #37352f; background: #f1f1ef; border-radius: 4px; }
+.nt-chip button { display: grid; place-items: center; width: 16px; height: 16px; color: #787774; background: none; border: 0; border-radius: 3px; cursor: pointer; }
+.nt-chip button:hover { color: #37352f; background: #e3e2e0; }
+.nt-ph { font-size: 13px; color: #b9b8b4; padding-left: 2px; }
+.nt-note { margin: 6px 0 0; font-size: 12px; color: #9b9a97; }
+
+.nt-error { margin: 0; padding: 9px 12px; font-size: 12.5px; font-weight: 500; color: #c4564e; background: #fdf4f3; border-radius: 6px; }
+.nt-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
+.nt-btn { display: inline-flex; align-items: center; justify-content: center; height: 34px; padding: 0 16px; font: inherit; font-size: 13px; font-weight: 500; border-radius: 6px; cursor: pointer; transition: background .12s; }
+.nt-btn.ghost { color: #37352f; background: #f1f1ef; border: 0; }
+.nt-btn.ghost:hover { background: #e8e7e4; }
+.nt-btn.go { color: #fff; background: #2383e2; border: 0; }
+.nt-btn.go:hover:not(:disabled) { background: #1b74c9; }
+.nt-btn.go:disabled { cursor: wait; opacity: .7; }
+.nt-btn:focus-visible { outline: 2px solid #37352f; outline-offset: 1px; }
 
 /* =============== modal transitions =============== */
 .modal-enter-active, .modal-leave-active { transition: opacity .2s; }
-.modal-enter-active .cg-modal, .modal-leave-active .cg-modal { transition: transform .2s cubic-bezier(.22,1,.36,1), opacity .2s; }
+.modal-enter-active .nt-modal, .modal-leave-active .nt-modal { transition: transform .2s cubic-bezier(.22,1,.36,1), opacity .2s; }
 .modal-enter-from, .modal-leave-to { opacity: 0; }
-.modal-enter-from .cg-modal, .modal-leave-to .cg-modal { transform: translateY(16px) scale(.98); opacity: 0; }
+.modal-enter-from .nt-modal, .modal-leave-to .nt-modal { transform: translateY(16px) scale(.98); opacity: 0; }
+.ntpop-enter-active, .ntpop-leave-active { transition: opacity .12s, transform .12s; }
+.ntpop-enter-from, .ntpop-leave-to { opacity: 0; transform: translateY(-4px); }
 
 /* =============== misc =============== */
 .mono { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -940,9 +1074,9 @@ onUnmounted(() => {
 /* =============== reduced motion =============== */
 @media (prefers-reduced-motion: reduce) {
   .sk, .spinning { animation: none; }
-  .cg-row, .cg-btn-primary, .cg-act, .cg-icon-btn, .cg-btn-quiet, .page-nav-link, .cg-role-pill, .cg-search, .cg-select, .cg-field input { transition: none; }
-  .modal-enter-active, .modal-leave-active, .toast-enter-active, .toast-leave-active { transition: none; }
-  .modal-enter-from, .modal-leave-to, .toast-enter-from, .toast-leave-to { opacity: 1; transform: none; }
+  .cg-row, .cg-btn-primary, .cg-act, .cg-icon-btn, .cg-btn-quiet, .page-nav-link, .cg-search, .cg-select, .nt-input, .nt-combo, .nt-multi, .nt-x, .nt-ib, .nt-btn { transition: none; }
+  .modal-enter-active, .modal-leave-active, .toast-enter-active, .toast-leave-active, .ntpop-enter-active, .ntpop-leave-active { transition: none; }
+  .modal-enter-from, .modal-leave-to, .toast-enter-from, .toast-leave-to, .ntpop-enter-from, .ntpop-leave-to { opacity: 1; transform: none; }
   .toast-enter-from, .toast-leave-to { transform: translate(-50%, 0); }
 }
 
@@ -962,7 +1096,12 @@ onUnmounted(() => {
   .cg-refresh { margin-left: 0; }
   .cg-card.cg-table-wrap { overflow-x: auto; }
   .cg-table { min-width: 860px; }
-  .cg-form-grid { grid-template-columns: 1fr; }
-  .cg-modal { border-radius: 16px; }
+  .nt-form { padding: 16px 20px 20px; }
+  .nt-modal-head { padding: 20px 20px 0; }
+  .nt-modal { border-radius: 8px; }
+}
+@media (max-width: 560px) {
+  .nt-row { flex-direction: column; gap: 6px; }
+  .nt-label { flex-basis: auto; padding-top: 0; }
 }
 </style>
