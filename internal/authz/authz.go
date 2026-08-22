@@ -1,6 +1,7 @@
 package authz
 
 import (
+	"context"
 	"errors"
 	"sync"
 
@@ -9,6 +10,12 @@ import (
 
 	"github.com/new-vision-lab/new-vision/internal/authn"
 )
+
+// RoleLoader reads the authoritative user-role assignments for a tenant from
+// the identity store. It is called lazily whenever a tenant's enforcer is
+// missing from the cache, so the first request after startup (or after an
+// Invalidate outside the identity handlers) sees real roles.
+type RoleLoader func(ctx context.Context, tenantID string) (map[string][]string, error)
 
 // EnforcerCache lazily builds and caches one Casbin enforcer per tenant.
 // node-app is a single-instance deployment, so a process-local cache is
@@ -20,10 +27,11 @@ import (
 type EnforcerCache struct {
 	mu        sync.RWMutex
 	enforcers map[string]*casbin.Enforcer
+	loader    RoleLoader
 }
 
-func NewEnforcerCache() *EnforcerCache {
-	return &EnforcerCache{enforcers: map[string]*casbin.Enforcer{}}
+func NewEnforcerCache(loader RoleLoader) *EnforcerCache {
+	return &EnforcerCache{enforcers: map[string]*casbin.Enforcer{}, loader: loader}
 }
 
 // Load sets the role->permission matrix for a tenant from the given
@@ -47,24 +55,26 @@ func (c *EnforcerCache) Invalidate(tenantID string) {
 }
 
 // Authorize checks whether the principal may perform act on obj within
-// its tenant domain. It lazily creates the tenant enforcer on first use
-// (with the permission matrix but no user roles).
-func (c *EnforcerCache) Authorize(p *authn.Principal, obj, act string) (bool, error) {
+// its tenant domain. A cache miss loads the tenant's user roles through
+// the configured RoleLoader, so enforcers always reflect the user_roles
+// table even when they were never populated explicitly.
+func (c *EnforcerCache) Authorize(ctx context.Context, p *authn.Principal, obj, act string) (bool, error) {
 	if p == nil {
 		return false, nil
 	}
-	e, err := c.enforcer(p.TenantID)
+	e, err := c.enforcer(ctx, p.TenantID)
 	if err != nil {
 		return false, err
 	}
 	return e.Enforce(p.UserID, p.TenantID, obj, act)
 }
 
-// enforcer returns the cached enforcer for tenantID, building an empty one
-// (permission matrix only, no user roles) on first use. It never calls Load
-// while holding the lock to avoid deadlock; the built enforcer is installed
-// under the write lock so concurrent callers see one winner.
-func (c *EnforcerCache) enforcer(tenantID string) (*casbin.Enforcer, error) {
+// enforcer returns the cached enforcer for tenantID. On a miss it builds one
+// from the permission matrix plus the tenant's live user roles (via the
+// RoleLoader; a nil loader yields an enforcer with no user bindings). It
+// never builds while holding the lock; the built enforcer is installed under
+// the write lock so concurrent callers see one winner.
+func (c *EnforcerCache) enforcer(ctx context.Context, tenantID string) (*casbin.Enforcer, error) {
 	c.mu.RLock()
 	e, ok := c.enforcers[tenantID]
 	c.mu.RUnlock()
@@ -72,7 +82,15 @@ func (c *EnforcerCache) enforcer(tenantID string) (*casbin.Enforcer, error) {
 		return e, nil
 	}
 	// Build outside the lock: slow path only.
-	e, err := buildEnforcer(tenantID, map[string][]string{})
+	userRoles := map[string][]string{}
+	if c.loader != nil {
+		loaded, err := c.loader(ctx, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		userRoles = loaded
+	}
+	e, err := buildEnforcer(tenantID, userRoles)
 	if err != nil {
 		return nil, err
 	}

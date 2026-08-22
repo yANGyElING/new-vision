@@ -69,7 +69,17 @@ func New(ctx context.Context, cfg Config, version string, logger *slog.Logger) (
 		return nil, fmt.Errorf("initialize token manager: %w", err)
 	}
 	authnHandler := authn.NewHandler(store.Tenants, store.Users, tokens, auditWriter)
-	authzCache := authz.NewEnforcerCache()
+	authzCache := authz.NewEnforcerCache(func(ctx context.Context, tenantID string) (map[string][]string, error) {
+		users, err := store.Users.List(ctx, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		userRoles := make(map[string][]string, len(users))
+		for _, u := range users {
+			userRoles[u.ID] = u.Roles
+		}
+		return userRoles, nil
+	})
 	authzMiddleware := authz.NewMiddleware(tokens, authzCache, anonymousRoutes)
 	identityHandler := identity.NewHandler(store, auditWriter, tokens.Hasher(), func(ctx context.Context) *identity.PrincipalInfo {
 		p := authn.PrincipalFrom(ctx)
@@ -78,22 +88,11 @@ func New(ctx context.Context, cfg Config, version string, logger *slog.Logger) (
 		}
 		return &identity.PrincipalInfo{UserID: p.UserID, TenantID: p.TenantID}
 	}, func(tenantID string) {
-		// Role assignments changed: drop the cached enforcer and rebuild it
-		// from the authoritative user_roles table so new roles take effect
-		// immediately without a restart.
+		// Role assignments changed: drop the cached enforcer. The next
+		// request rebuilds it from the authoritative user_roles table via
+		// the cache's role loader, so new roles take effect immediately
+		// without a restart.
 		authzCache.Invalidate(tenantID)
-		users, err := store.Users.List(ctx, tenantID)
-		if err != nil {
-			logger.Warn("reload authorization roles failed", "tenant_id", tenantID, "error", err)
-			return
-		}
-		userRoles := make(map[string][]string, len(users))
-		for _, u := range users {
-			userRoles[u.ID] = u.Roles
-		}
-		if err := authzCache.Load(tenantID, userRoles); err != nil {
-			logger.Warn("reload authorization roles failed", "tenant_id", tenantID, "error", err)
-		}
 	})
 
 	// Device / access / sync / siptest.
@@ -120,16 +119,16 @@ func New(ctx context.Context, cfg Config, version string, logger *slog.Logger) (
 		cancel:   cancel,
 	}
 
-	// Load user roles into the authz cache for every tenant on startup.
-	if err := loadAuthzRoles(ctx, store, authzCache); err != nil {
-		app.Close()
-		return nil, fmt.Errorf("load authorization roles: %w", err)
-	}
-
-	// Seed the initial admin user when configured and the user table is empty.
+	// Seed the initial admin user first, then warm the authz cache: the
+	// enforcer must be built after the admin exists so its roles are
+	// included (the lazy loader covers later tenants either way).
 	if err := seedAdmin(ctx, store, tokens.Hasher(), cfg.SeedAdminPassword); err != nil {
 		app.Close()
 		return nil, fmt.Errorf("seed admin: %w", err)
+	}
+	if err := loadAuthzRoles(ctx, store, authzCache); err != nil {
+		app.Close()
+		return nil, fmt.Errorf("load authorization roles: %w", err)
 	}
 
 	go sync.NewSyncRunner(devices, accessClient, projection, cfg.AccessPollInterval).Run(ctx)

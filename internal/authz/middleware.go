@@ -32,7 +32,7 @@ func (m *Middleware) With(obj, act string, next http.HandlerFunc) http.HandlerFu
 			return
 		}
 		ctx := authn.WithPrincipal(r.Context(), p)
-		allowed, err := m.cache.Authorize(p, obj, act)
+		allowed, err := m.cache.Authorize(r.Context(), p, obj, act)
 		if err != nil {
 			writeError(w, http.StatusServiceUnavailable, "service_unavailable", "authorization engine unavailable")
 			return
