@@ -323,7 +323,8 @@ onMounted(() => {
       </div>
       <nav class="prod-nav" aria-label="主导航">
         <RouterLink to="/devices" class="prod-nav-link active" aria-current="page">设备管理</RouterLink>
-        <RouterLink v-if="nodeAdmin" to="/identity" class="prod-nav-link">权限管理</RouterLink>
+        <RouterLink v-if="nodeAdmin" to="/users" class="prod-nav-link">用户管理</RouterLink>
+        <RouterLink v-if="nodeAdmin" to="/identity" class="prod-nav-link">组织架构</RouterLink>
         <RouterLink to="/" class="prod-nav-link">测试控制台</RouterLink>
       </nav>
       <div class="prod-topbar-right">

@@ -4,6 +4,7 @@ import DevicesView from '@/views/DevicesView.vue'
 import IdentityView from '@/views/IdentityView.vue'
 import LoginView from '@/views/LoginView.vue'
 import NotFoundView from '@/views/NotFoundView.vue'
+import UsersView from '@/views/UsersView.vue'
 import { isAuthenticated } from '@/api/http'
 
 export const router = createRouter({
@@ -11,6 +12,7 @@ export const router = createRouter({
   routes: [
     { path: '/', component: ConsoleView, meta: { requiresAuth: true } },
     { path: '/devices', component: DevicesView, meta: { requiresAuth: true } },
+    { path: '/users', component: UsersView, meta: { requiresAuth: true } },
     { path: '/identity', component: IdentityView, meta: { requiresAuth: true } },
     { path: '/login', component: LoginView },
     { path: '/:pathMatch(.*)*', component: NotFoundView },

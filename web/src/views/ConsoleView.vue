@@ -348,7 +348,8 @@ onUnmounted(() => activeHealthController?.abort())
       </RouterLink>
       <nav aria-label="主导航">
         <RouterLink class="nav-link" to="/devices">设备管理</RouterLink>
-        <RouterLink v-if="nodeAdmin" class="nav-link" to="/identity">权限管理</RouterLink>
+        <RouterLink v-if="nodeAdmin" class="nav-link" to="/users">用户管理</RouterLink>
+        <RouterLink v-if="nodeAdmin" class="nav-link" to="/identity">组织架构</RouterLink>
         <span class="test-notice"><Zap :size="14" />测试专用界面，生产前需启用认证</span>
       </nav>
     </header>

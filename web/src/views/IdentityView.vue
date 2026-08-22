@@ -1,18 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
-  AlertTriangle, Building2, Check, ChevronLeft, ChevronRight, Edit3, Eye, EyeOff,
-  KeyRound, Monitor, Network, Pause, Play, Plus, RefreshCw, Search, ShieldCheck,
-  Trash2, UserPlus, Users, X,
+  AlertTriangle, Building2, Check, Edit3, Monitor, Network, Pause, Play,
+  Plus, RefreshCw, ShieldCheck, Trash2, X,
 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import { fetchHealth, type HealthState } from '@/api/health'
 import { me } from '@/api/auth'
 import {
-  ROLE_META, createUser, createRegion, createTenant, deleteUser, deleteRegion,
-  listRegions, listRoles, listTenants, listUsers, renameRegion, setTenantStatus,
-  setUserPassword, updateUser,
-  type IdentityUser, type Region, type Tenant,
+  createRegion, createTenant, deleteRegion, listRegions, listTenants,
+  renameRegion, setTenantStatus,
+  type Region, type Tenant,
 } from '@/api/identity'
 
 // ---------- health band ----------
@@ -37,15 +35,13 @@ async function refreshHealth() {
 }
 
 // ---------- current principal ----------
-const currentUser = ref<{ id: string; tenantID: string } | null>(null)
 const nodeAdmin = ref(false)
 const accessDenied = ref(false)
 
 // ---------- tabs ----------
-type TabKey = 'users' | 'tenants' | 'regions'
-const tab = ref<TabKey>('users')
+type TabKey = 'tenants' | 'regions'
+const tab = ref<TabKey>('tenants')
 const TABS: { key: TabKey; label: string }[] = [
-  { key: 'users', label: '用户' },
   { key: 'tenants', label: '租户' },
   { key: 'regions', label: '区域' },
 ]
@@ -61,12 +57,6 @@ function flashMessage(msg: string) {
 const tenants = ref<Tenant[]>([])
 const tenantsLoading = ref(false)
 const tenantsError = ref('')
-const tenantFilter = ref('')
-const tenantNameByID = computed(() => {
-  const map = new Map<string, string>()
-  for (const t of tenants.value) map.set(t.id, t.name)
-  return map
-})
 
 async function loadTenants() {
   tenantsLoading.value = true
@@ -145,14 +135,8 @@ const flatRegions = computed<FlatRegion[]>(() => {
   return out
 })
 
-const regionNameByID = computed(() => {
-  const map = new Map<string, string>()
-  for (const f of flatRegions.value) map.set(f.region.id, f.path)
-  return map
-})
-
 function regionPath(id: string): string {
-  return regionNameByID.value.get(id) ?? id
+  return flatRegions.value.find((f) => f.region.id === id)?.path ?? id
 }
 
 async function loadRegions() {
@@ -248,265 +232,23 @@ async function removeRegion(flat: FlatRegion) {
   }
 }
 
-// ---------- users ----------
-const users = ref<IdentityUser[]>([])
-const usersLoading = ref(false)
-const usersError = ref('')
-const userSearch = ref('')
-const userPage = ref(1)
-const userPageSize = 10
-const userBusy = ref<Record<string, string>>({})
-
-async function loadUsers() {
-  usersLoading.value = true
-  usersError.value = ''
-  try {
-    users.value = await listUsers(tenantFilter.value || undefined)
-  } catch (error) {
-    usersError.value = error instanceof Error ? error.message : '加载用户列表失败'
-  } finally {
-    usersLoading.value = false
-  }
-}
-
-function resetUserPage() { userPage.value = 1 }
-
-const filteredUsers = computed(() => {
-  const q = userSearch.value.trim().toLowerCase()
-  let list = users.value
-  if (q) {
-    list = list.filter((u) =>
-      u.username.toLowerCase().includes(q)
-      || u.display_name.toLowerCase().includes(q)
-      || u.roles.some((r) => r.toLowerCase().includes(q)))
-  }
-  return [...list].sort((a, b) => a.username.localeCompare(b.username))
-})
-
-const userTotalPages = computed(() => Math.max(1, Math.ceil(filteredUsers.value.length / userPageSize)))
-const pageUsers = computed(() => filteredUsers.value.slice((userPage.value - 1) * userPageSize, userPage.value * userPageSize))
-
-// ---------- roles ----------
-const availableRoles = ref<string[]>([])
-
-async function loadRoles() {
-  try {
-    const result = await listRoles()
-    availableRoles.value = result.roles
-  } catch {
-    availableRoles.value = Object.keys(ROLE_META)
-  }
-}
-
-function roleLabel(role: string): string {
-  return ROLE_META[role]?.label ?? role
-}
-function roleHint(role: string): string {
-  return ROLE_META[role]?.hint ?? role
-}
-
-// ---------- user create / edit modal ----------
-const userModalOpen = ref(false)
-const userModalMode = ref<'create' | 'edit'>('create')
-const userSaving = ref(false)
-const userFormError = ref('')
-const userForm = ref<{
-  id: string; tenant_id: string; username: string; display_name: string
-  password: string; status: 'active' | 'disabled'; roles: string[]; region_ids: string[]
-}>({
-  id: '', tenant_id: '', username: '', display_name: '',
-  password: '', status: 'active', roles: [], region_ids: [],
-})
-const passwordVisible = ref(false)
-
-function openUserCreate() {
-  userModalMode.value = 'create'
-  userForm.value = {
-    id: '', tenant_id: currentUser.value?.tenantID ?? '', username: '', display_name: '',
-    password: '', status: 'active', roles: [], region_ids: [],
-  }
-  passwordVisible.value = false
-  userFormError.value = ''
-  userModalOpen.value = true
-}
-
-function openUserEdit(user: IdentityUser) {
-  userModalMode.value = 'edit'
-  userForm.value = {
-    id: user.id,
-    tenant_id: user.tenant_id,
-    username: user.username,
-    display_name: user.display_name,
-    password: '',
-    status: user.status,
-    roles: [...user.roles],
-    region_ids: [...user.region_ids],
-  }
-  passwordVisible.value = false
-  userFormError.value = ''
-  userModalOpen.value = true
-}
-
-function closeUserModal() {
-  userModalOpen.value = false
-  userFormError.value = ''
-}
-
-function toggleRole(role: string) {
-  const roles = userForm.value.roles
-  const idx = roles.indexOf(role)
-  if (idx >= 0) roles.splice(idx, 1)
-  else roles.push(role)
-}
-
-function toggleRegionScope(id: string) {
-  const ids = userForm.value.region_ids
-  const idx = ids.indexOf(id)
-  if (idx >= 0) ids.splice(idx, 1)
-  else ids.push(id)
-}
-
-function generatePassword() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
-  const bytes = new Uint32Array(16)
-  crypto.getRandomValues(bytes)
-  userForm.value.password = Array.from(bytes, (b) => chars[b % chars.length]).join('')
-  passwordVisible.value = true
-}
-
-async function submitUserForm() {
-  userFormError.value = ''
-  const username = userForm.value.username.trim()
-  const displayName = userForm.value.display_name.trim()
-  if (userModalMode.value === 'create') {
-    if (!username) { userFormError.value = '请输入用户名'; return }
-    if (!userForm.value.password) { userFormError.value = '请设置初始密码'; return }
-  }
-  userSaving.value = true
-  try {
-    if (userModalMode.value === 'create') {
-      await createUser({
-        tenant_id: userForm.value.tenant_id || undefined,
-        username,
-        password: userForm.value.password,
-        display_name: displayName,
-        roles: userForm.value.roles,
-        region_ids: userForm.value.region_ids,
-      })
-      flashMessage(`用户 ${username} 已创建`)
-    } else {
-      await updateUser(userForm.value.id, {
-        display_name: displayName,
-        status: userForm.value.status,
-        roles: userForm.value.roles,
-        region_ids: userForm.value.region_ids,
-      })
-      flashMessage(`用户 ${username} 已更新`)
-    }
-    userModalOpen.value = false
-    await loadUsers()
-  } catch (error) {
-    userFormError.value = error instanceof Error ? error.message : '保存失败'
-  } finally {
-    userSaving.value = false
-  }
-}
-
-// ---------- user password modal ----------
-const passwordModalUser = ref<IdentityUser | null>(null)
-const newPassword = ref('')
-const newPasswordVisible = ref(false)
-const passwordSaving = ref(false)
-const passwordError = ref('')
-
-function openPasswordModal(user: IdentityUser) {
-  passwordModalUser.value = user
-  newPassword.value = ''
-  newPasswordVisible.value = false
-  passwordError.value = ''
-}
-
-function generateAdminPassword() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
-  const bytes = new Uint32Array(16)
-  crypto.getRandomValues(bytes)
-  newPassword.value = Array.from(bytes, (b) => chars[b % chars.length]).join('')
-  newPasswordVisible.value = true
-}
-
-async function submitPassword() {
-  if (!passwordModalUser.value) return
-  if (!newPassword.value) { passwordError.value = '请输入新密码'; return }
-  passwordSaving.value = true
-  passwordError.value = ''
-  try {
-    await setUserPassword(passwordModalUser.value.id, newPassword.value)
-    flashMessage(`用户 ${passwordModalUser.value.username} 的密码已重置`)
-    passwordModalUser.value = null
-  } catch (error) {
-    passwordError.value = error instanceof Error ? error.message : '重置失败'
-  } finally {
-    passwordSaving.value = false
-  }
-}
-
-// ---------- user actions ----------
-async function toggleUserStatus(user: IdentityUser) {
-  userBusy.value[user.id] = 'status'
-  try {
-    const next = user.status === 'active' ? 'disabled' : 'active'
-    await updateUser(user.id, { status: next })
-    flashMessage(next === 'active' ? `用户 ${user.username} 已启用` : `用户 ${user.username} 已停用`)
-    await loadUsers()
-  } catch (error) {
-    flashMessage(error instanceof Error ? error.message : '操作失败')
-  } finally {
-    delete userBusy.value[user.id]
-  }
-}
-
-async function removeUser(user: IdentityUser) {
-  if (!window.confirm(`确定删除用户 ${user.username}（${user.display_name || '未设置显示名'}）？此操作不可恢复。`)) return
-  userBusy.value[user.id] = 'delete'
-  try {
-    await deleteUser(user.id)
-    flashMessage(`用户 ${user.username} 已删除`)
-    await loadUsers()
-  } catch (error) {
-    flashMessage(error instanceof Error ? error.message : '删除失败')
-  } finally {
-    delete userBusy.value[user.id]
-  }
-}
-
 // ---------- stats ----------
 const stats = computed(() => {
-  const active = users.value.filter((u) => u.status === 'active').length
-  const regionsTotal = flatRegions.value.length
+  const active = tenants.value.filter((t) => t.status === 'active').length
   return {
-    users: users.value.length,
-    active,
-    disabled: users.value.length - active,
     tenants: tenants.value.length,
-    regions: regionsTotal,
+    active,
+    disabled: tenants.value.length - active,
+    regions: flatRegions.value.length,
   }
 })
 
 const headAction = computed(() => {
   switch (tab.value) {
-    case 'tenants': return { label: '新增租户', icon: Building2, run: openTenantModal }
     case 'regions': return { label: '新增根区域', icon: Network, run: () => openRegionModal('') }
-    default: return { label: '新增用户', icon: UserPlus, run: openUserCreate }
+    default: return { label: '新增租户', icon: Building2, run: openTenantModal }
   }
 })
-
-function refreshCurrentTab() {
-  switch (tab.value) {
-    case 'tenants': return void loadTenants()
-    case 'regions': return void loadRegions()
-    default: return void loadUsers()
-  }
-}
 
 // ---------- formatting ----------
 function formatDate(iso: string): string {
@@ -526,16 +268,14 @@ onMounted(() => {
   void (async () => {
     try {
       const info = await me()
-      currentUser.value = { id: info.user.id, tenantID: info.user.tenant_id }
       nodeAdmin.value = (info.roles ?? []).includes('node_admin')
       if (!nodeAdmin.value) {
         accessDenied.value = true
         return
       }
-      await Promise.all([loadTenants(), loadRegions(), loadRoles()])
-      await loadUsers()
+      await Promise.all([loadTenants(), loadRegions()])
     } catch (error) {
-      usersError.value = error instanceof Error ? error.message : '初始化失败'
+      tenantsError.value = error instanceof Error ? error.message : '初始化失败'
     }
   })()
 })
@@ -556,7 +296,8 @@ onUnmounted(() => {
         </div>
       </div>
       <nav class="prod-nav" aria-label="主导航">
-        <RouterLink to="/identity" class="prod-nav-link active" aria-current="page">权限管理</RouterLink>
+        <RouterLink to="/users" class="prod-nav-link">用户管理</RouterLink>
+        <RouterLink to="/identity" class="prod-nav-link active" aria-current="page">组织架构</RouterLink>
         <RouterLink to="/devices" class="prod-nav-link">设备管理</RouterLink>
         <RouterLink to="/" class="prod-nav-link">测试控制台</RouterLink>
       </nav>
@@ -570,9 +311,9 @@ onUnmounted(() => {
     <main class="prod-main">
       <div class="prod-page-head">
         <div class="prod-heading">
-          <span class="prod-eyebrow">IDENTITY / RBAC</span>
-          <h1>权限管理</h1>
-          <p>管理租户、区域、用户与角色分配，基于 Casbin 域内 RBAC 实时生效。</p>
+          <span class="prod-eyebrow">ORGANIZATION / TENANTS &amp; REGIONS</span>
+          <h1>组织架构</h1>
+          <p>管理租户与区域层级；区域决定用户可见的设备数据范围，在「用户管理」中分配。</p>
         </div>
         <button v-if="nodeAdmin" class="prod-button prod-button-primary" type="button" @click="headAction.run()">
           <component :is="headAction.icon" :size="16" :stroke-width="2.2" />{{ headAction.label }}
@@ -589,37 +330,33 @@ onUnmounted(() => {
       <div v-if="accessDenied" class="prod-empty denied" role="alert">
         <span class="prod-empty-icon"><ShieldCheck :size="26" /></span>
         <strong>需要节点管理员权限</strong>
-        <p>身份与权限管理仅对 node_admin 角色开放，请联系管理员调整你的角色。</p>
+        <p>组织架构管理仅对 node_admin 角色开放，请联系管理员调整你的角色。</p>
         <RouterLink class="prod-button" to="/devices">前往设备管理</RouterLink>
       </div>
 
       <template v-else>
         <!-- metrics -->
-        <div class="prod-stats" aria-label="身份数据统计">
+        <div class="prod-stats" aria-label="组织数据统计">
           <div class="prod-stat">
-            <span class="prod-stat-label"><Users :size="14" />用户</span>
-            <strong class="prod-stat-value">{{ stats.users }}</strong>
-          </div>
-          <div class="prod-stat">
-            <span class="prod-stat-label"><span class="stat-dot dot-online" />启用中</span>
-            <strong class="prod-stat-value stat-online">{{ stats.active }}</strong>
-          </div>
-          <div class="prod-stat">
-            <span class="prod-stat-label"><span class="stat-dot dot-offline" />已停用</span>
-            <strong class="prod-stat-value stat-offline">{{ stats.disabled }}</strong>
-          </div>
-          <div class="prod-stat">
-            <span class="prod-stat-label"><Building2 :size="14" />租户</span>
+            <span class="prod-stat-label"><Building2 :size="14" />租户总数</span>
             <strong class="prod-stat-value">{{ stats.tenants }}</strong>
           </div>
           <div class="prod-stat">
-            <span class="prod-stat-label"><Network :size="14" />区域</span>
+            <span class="prod-stat-label"><span class="stat-dot dot-online" />启用租户</span>
+            <strong class="prod-stat-value stat-online">{{ stats.active }}</strong>
+          </div>
+          <div class="prod-stat">
+            <span class="prod-stat-label"><span class="stat-dot dot-offline" />停用租户</span>
+            <strong class="prod-stat-value stat-offline">{{ stats.disabled }}</strong>
+          </div>
+          <div class="prod-stat">
+            <span class="prod-stat-label"><Network :size="14" />区域节点</span>
             <strong class="prod-stat-value">{{ stats.regions }}</strong>
           </div>
         </div>
 
         <!-- tabs -->
-        <div class="prod-tabs" role="tablist" aria-label="身份数据视图">
+        <div class="prod-tabs" role="tablist" aria-label="组织数据视图">
           <button
             v-for="t in TABS" :key="t.key" type="button" class="prod-tab"
             :class="{ active: tab === t.key }" role="tab" :aria-selected="tab === t.key"
@@ -627,135 +364,8 @@ onUnmounted(() => {
           >{{ t.label }}</button>
         </div>
 
-        <!-- ============ users tab ============ -->
-        <section v-if="tab === 'users'" aria-label="用户管理">
-          <div class="prod-toolbar">
-            <div class="prod-search">
-              <Search :size="15" class="prod-search-icon" />
-              <input v-model="userSearch" placeholder="搜索用户名、显示名或角色" @input="resetUserPage" aria-label="搜索用户" />
-              <button v-if="userSearch" class="prod-search-clear" type="button" aria-label="清空搜索" @click="userSearch = ''; resetUserPage()"><X :size="13" /></button>
-            </div>
-            <select v-model="tenantFilter" class="prod-select" aria-label="按租户筛选" @change="resetUserPage(); loadUsers()">
-              <option value="">全部租户（本租户）</option>
-              <option v-for="t in tenants" :key="t.id" :value="t.id">{{ t.name }}</option>
-            </select>
-            <button class="prod-icon prod-refresh" type="button" :disabled="usersLoading" aria-label="刷新用户列表" title="刷新" @click="loadUsers">
-              <RefreshCw :size="16" :class="{ spinning: usersLoading }" />
-            </button>
-          </div>
-
-          <div v-if="usersError" class="prod-error" role="alert">
-            <AlertTriangle :size="18" />
-            <div>
-              <strong>加载失败</strong>
-              <p>{{ usersError }}</p>
-            </div>
-            <button class="prod-button" type="button" @click="loadUsers"><RefreshCw :size="14" />重试</button>
-          </div>
-
-          <div v-else-if="usersLoading" class="prod-table-wrap" aria-label="加载中">
-            <table class="prod-table">
-              <thead>
-                <tr>
-                  <th scope="col">用户</th><th scope="col">租户</th><th scope="col">角色</th>
-                  <th scope="col">区域范围</th><th scope="col">状态</th><th scope="col">创建时间</th>
-                  <th scope="col" class="col-actions">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="n in 6" :key="n" class="skeleton-row">
-                  <td><span class="sk sk-name" /></td>
-                  <td><span class="sk sk-pill" /></td>
-                  <td><span class="sk sk-pill" /></td>
-                  <td><span class="sk sk-pill" /></td>
-                  <td><span class="sk sk-pill" /></td>
-                  <td><span class="sk sk-id" /></td>
-                  <td><span class="sk sk-actions" /></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div v-else-if="filteredUsers.length > 0" class="prod-table-wrap">
-            <table class="prod-table">
-              <thead>
-                <tr>
-                  <th scope="col">用户</th><th scope="col">租户</th><th scope="col">角色</th>
-                  <th scope="col">区域范围</th><th scope="col">状态</th><th scope="col">创建时间</th>
-                  <th scope="col" class="col-actions">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="user in pageUsers" :key="user.id" class="prod-row">
-                  <td class="prod-name-cell">
-                    <div class="prod-name">{{ user.username }}</div>
-                    <div class="prod-name-sub">{{ user.display_name || '未设置显示名' }}</div>
-                  </td>
-                  <td class="prod-tenant-cell">{{ tenantNameByID.get(user.tenant_id) ?? user.tenant_id }}</td>
-                  <td>
-                    <div class="prod-role-pills">
-                      <span v-for="role in user.roles" :key="role" class="prod-pill" :class="`pill-role-${role}`" :title="roleHint(role)">
-                        {{ roleLabel(role) }}
-                      </span>
-                      <span v-if="user.roles.length === 0" class="prod-pill pill-muted">无角色</span>
-                    </div>
-                  </td>
-                  <td>
-                    <span v-if="user.region_ids.length > 0" class="prod-scope" :title="user.region_ids.map(regionPath).join('\n')">
-                      {{ user.region_ids.length }} 个区域
-                    </span>
-                    <span v-else class="prod-scope prod-scope-none">未分配</span>
-                  </td>
-                  <td>
-                    <span class="prod-pill" :class="user.status === 'active' ? 'pill-enable' : 'pill-muted'">
-                      <span class="pill-dot" :class="user.status === 'active' ? 'dot-online' : 'dot-offline'" />
-                      {{ user.status === 'active' ? '启用' : '停用' }}
-                    </span>
-                  </td>
-                  <td class="mono prod-time">{{ formatDate(user.created_at) }}</td>
-                  <td class="col-actions">
-                    <div class="prod-actions">
-                      <button class="prod-icon" type="button" title="编辑用户" aria-label="编辑用户" @click="openUserEdit(user)"><Edit3 :size="15" /></button>
-                      <button class="prod-icon" type="button" title="重置密码" aria-label="重置密码" @click="openPasswordModal(user)"><KeyRound :size="15" /></button>
-                      <button class="prod-icon" type="button" :disabled="userBusy[user.id] === 'status'" :title="user.status === 'active' ? '停用' : '启用'" :aria-label="user.status === 'active' ? '停用' : '启用'" @click="toggleUserStatus(user)">
-                        <Pause v-if="user.status === 'active'" :size="15" /><Play v-else :size="15" />
-                      </button>
-                      <button
-                        class="prod-icon danger" type="button"
-                        :disabled="userBusy[user.id] === 'delete' || user.id === currentUser?.id"
-                        :title="user.id === currentUser?.id ? '不能删除自己的账号' : '删除'"
-                        :aria-label="user.id === currentUser?.id ? '不能删除自己的账号' : '删除'"
-                        @click="removeUser(user)"
-                      ><Trash2 :size="15" /></button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div v-else class="prod-empty" role="status">
-            <span class="prod-empty-icon"><Search v-if="userSearch" :size="26" /><Users v-else :size="26" /></span>
-            <strong>{{ userSearch ? '没有符合条件的用户' : '还没有用户' }}</strong>
-            <p>{{ userSearch ? '试试调整搜索词或筛选条件。' : '点击「新增用户」创建第一个账号。' }}</p>
-            <button v-if="!userSearch" class="prod-button prod-button-primary" type="button" @click="openUserCreate">
-              <UserPlus :size="15" />新增用户
-            </button>
-            <button v-else class="prod-button" type="button" @click="userSearch = ''; resetUserPage()"><X :size="15" />清除筛选</button>
-          </div>
-
-          <div v-if="filteredUsers.length > userPageSize" class="prod-pagination">
-            <span class="prod-page-count mono">{{ (userPage - 1) * userPageSize + 1 }}-{{ Math.min(userPage * userPageSize, filteredUsers.length) }} / {{ filteredUsers.length }}</span>
-            <div class="prod-page-btns">
-              <button class="prod-icon" type="button" :disabled="userPage <= 1" aria-label="上一页" @click="userPage--"><ChevronLeft :size="15" /></button>
-              <span class="prod-page-info mono">{{ userPage }} / {{ userTotalPages }}</span>
-              <button class="prod-icon" type="button" :disabled="userPage >= userTotalPages" aria-label="下一页" @click="userPage++"><ChevronRight :size="15" /></button>
-            </div>
-          </div>
-        </section>
-
         <!-- ============ tenants tab ============ -->
-        <section v-else-if="tab === 'tenants'" aria-label="租户管理">
+        <section v-if="tab === 'tenants'" aria-label="租户管理">
           <div class="prod-toolbar">
             <div class="prod-toolbar-hint">租户是权限的顶层隔离域；停用租户后其下用户将无法登录。</div>
             <button class="prod-icon prod-refresh" type="button" :disabled="tenantsLoading" aria-label="刷新租户列表" title="刷新" @click="loadTenants">
@@ -905,133 +515,6 @@ onUnmounted(() => {
       <span class="prod-footer-deps"><ShieldCheck :size="13" />Casbin RBAC · 角色变更实时生效</span>
     </footer>
 
-    <!-- ============ user create / edit modal ============ -->
-    <Teleport to="body">
-      <Transition name="modal">
-        <div v-if="userModalOpen" class="prod-overlay" @click.self="closeUserModal">
-          <div class="prod-modal" role="dialog" aria-modal="true" :aria-label="userModalMode === 'create' ? '新增用户' : '编辑用户'">
-            <div class="prod-modal-head">
-              <h2>{{ userModalMode === 'create' ? '新增用户' : `编辑用户 ${userForm.username}` }}</h2>
-              <button class="prod-icon" type="button" aria-label="关闭" @click="closeUserModal"><X :size="16" /></button>
-            </div>
-            <form class="prod-form" @submit.prevent="submitUserForm">
-              <div class="prod-form-grid">
-                <div v-if="userModalMode === 'create'" class="prod-field">
-                  <label for="idm-user-username">用户名</label>
-                  <input id="idm-user-username" v-model="userForm.username" required maxlength="64" autocomplete="off" placeholder="登录用户名" />
-                </div>
-                <div v-if="userModalMode === 'create' && tenants.length > 1" class="prod-field">
-                  <label for="idm-user-tenant">所属租户</label>
-                  <select id="idm-user-tenant" v-model="userForm.tenant_id" class="prod-select prod-select-full">
-                    <option v-for="t in tenants" :key="t.id" :value="t.id">{{ t.name }}</option>
-                  </select>
-                </div>
-                <div class="prod-field" :class="{ 'prod-field-full': userModalMode === 'edit' }">
-                  <label for="idm-user-display">显示名</label>
-                  <input id="idm-user-display" v-model="userForm.display_name" maxlength="255" placeholder="如：张三（运维）" />
-                </div>
-                <div v-if="userModalMode === 'edit'" class="prod-field">
-                  <label for="idm-user-status">账号状态</label>
-                  <select id="idm-user-status" v-model="userForm.status" class="prod-select prod-select-full">
-                    <option value="active">启用</option>
-                    <option value="disabled">停用</option>
-                  </select>
-                </div>
-                <div v-if="userModalMode === 'create'" class="prod-field prod-field-full">
-                  <label for="idm-user-password">初始密码</label>
-                  <div class="prod-input-action">
-                    <input
-                      id="idm-user-password" v-model="userForm.password"
-                      :type="passwordVisible ? 'text' : 'password'"
-                      required maxlength="256" autocomplete="new-password" placeholder="至少 1 位，建议使用生成器"
-                    />
-                    <button class="prod-icon" type="button" :aria-label="passwordVisible ? '隐藏密码' : '显示密码'" :title="passwordVisible ? '隐藏密码' : '显示密码'" @click="passwordVisible = !passwordVisible">
-                      <Eye v-if="passwordVisible" :size="15" /><EyeOff v-else :size="15" />
-                    </button>
-                    <button class="prod-icon" type="button" aria-label="生成随机密码" title="生成随机密码" @click="generatePassword"><KeyRound :size="15" /></button>
-                  </div>
-                </div>
-                <div class="prod-field prod-field-full">
-                  <span class="prod-field-label">角色（可多选）</span>
-                  <div class="prod-role-chips" role="group" aria-label="角色选择">
-                    <label
-                      v-for="role in availableRoles" :key="role" class="prod-role-chip"
-                      :class="{ checked: userForm.roles.includes(role) }" :title="roleHint(role)"
-                    >
-                      <input type="checkbox" :checked="userForm.roles.includes(role)" @change="toggleRole(role)" />
-                      <span class="prod-role-chip-label">{{ roleLabel(role) }}</span>
-                      <span class="prod-role-chip-code mono">{{ role }}</span>
-                    </label>
-                  </div>
-                  <span class="prod-meta-hint">角色决定功能权限，矩阵由服务端固定，变更立即生效。</span>
-                </div>
-                <div class="prod-field prod-field-full">
-                  <span class="prod-field-label">区域范围（数据权限，可多选）</span>
-                  <div v-if="flatRegions.length > 0" class="prod-region-picker" role="group" aria-label="区域范围选择">
-                    <label
-                      v-for="flat in flatRegions" :key="flat.region.id" class="prod-region-check"
-                      :style="{ paddingLeft: `${flat.depth * 20 + 10}px` }"
-                    >
-                      <input type="checkbox" :checked="userForm.region_ids.includes(flat.region.id)" @change="toggleRegionScope(flat.region.id)" />
-                      <span class="prod-region-check-name">{{ flat.region.name }}</span>
-                      <span class="prod-region-check-path">{{ flat.path }}</span>
-                    </label>
-                  </div>
-                  <p v-else class="prod-meta-hint">暂无区域可分配，可先在「区域」页签创建。</p>
-                  <span v-if="flatRegions.length > 0" class="prod-meta-hint">勾选父区域即覆盖其整个子树；不选则该用户看不到任何设备。</span>
-                </div>
-              </div>
-              <p v-if="userFormError" class="prod-error" role="alert">{{ userFormError }}</p>
-              <div class="prod-modal-actions">
-                <button class="prod-button" type="button" @click="closeUserModal">取消</button>
-                <button class="prod-button prod-button-primary" type="submit" :disabled="userSaving">
-                  <Check :size="16" />{{ userSaving ? '保存中…' : userModalMode === 'create' ? '创建' : '保存' }}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
-
-    <!-- ============ reset password modal ============ -->
-    <Teleport to="body">
-      <Transition name="modal">
-        <div v-if="passwordModalUser" class="prod-overlay" @click.self="passwordModalUser = null">
-          <div class="prod-modal prod-modal-narrow" role="dialog" aria-modal="true" :aria-label="`重置 ${passwordModalUser.username} 的密码`">
-            <div class="prod-modal-head">
-              <h2>重置密码 <span class="prod-type-badge">{{ passwordModalUser.username }}</span></h2>
-              <button class="prod-icon" type="button" aria-label="关闭" @click="passwordModalUser = null"><X :size="16" /></button>
-            </div>
-            <form class="prod-form" @submit.prevent="submitPassword">
-              <div class="prod-field">
-                <label for="idm-new-password">新密码</label>
-                <div class="prod-input-action">
-                  <input
-                    id="idm-new-password" v-model="newPassword"
-                    :type="newPasswordVisible ? 'text' : 'password'"
-                    required maxlength="256" autocomplete="new-password" placeholder="至少 1 位，建议使用生成器"
-                  />
-                  <button class="prod-icon" type="button" :aria-label="newPasswordVisible ? '隐藏密码' : '显示密码'" :title="newPasswordVisible ? '隐藏密码' : '显示密码'" @click="newPasswordVisible = !newPasswordVisible">
-                    <Eye v-if="newPasswordVisible" :size="15" /><EyeOff v-else :size="15" />
-                  </button>
-                  <button class="prod-icon" type="button" aria-label="生成随机密码" title="生成随机密码" @click="generateAdminPassword"><KeyRound :size="15" /></button>
-                </div>
-                <span class="prod-meta-hint">重置后原密码立即失效，请将新密码安全地告知用户。</span>
-              </div>
-              <p v-if="passwordError" class="prod-error" role="alert">{{ passwordError }}</p>
-              <div class="prod-modal-actions">
-                <button class="prod-button" type="button" @click="passwordModalUser = null">取消</button>
-                <button class="prod-button prod-button-primary" type="submit" :disabled="passwordSaving">
-                  <KeyRound :size="16" />{{ passwordSaving ? '重置中…' : '重置密码' }}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
-
     <!-- ============ tenant create modal ============ -->
     <Teleport to="body">
       <Transition name="modal">
@@ -1148,7 +631,7 @@ onUnmounted(() => {
 .toast-enter-active, .toast-leave-active { transition: opacity .2s, transform .2s; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(-6px); }
 /* ---------- metrics ---------- */
-.prod-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }
+.prod-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }
 .prod-stat { display: flex; flex-direction: column; gap: 8px; padding: 16px 18px; background: #fff; border: 1px solid #e4e7eb; border-radius: 11px; }
 .prod-stat-label { display: inline-flex; align-items: center; gap: 7px; color: #6b7683; font-size: 12px; font-weight: 600; }
 .stat-dot { width: 7px; height: 7px; border-radius: 50%; }
@@ -1166,14 +649,6 @@ onUnmounted(() => {
 /* ---------- toolbar ---------- */
 .prod-toolbar { display: flex; gap: 10px; margin-top: 20px; align-items: center; }
 .prod-toolbar-hint { flex: 1; color: #8a939d; font-size: 12.5px; }
-.prod-search { position: relative; flex: 1; max-width: 340px; }
-.prod-search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #8a939d; pointer-events: none; }
-.prod-search input { width: 100%; padding: 10px 34px 10px 35px; font: inherit; font-size: 13.5px; color: #1a1f26; background: #fff; border: 1px solid #d9dee4; border-radius: 9px; transition: border-color .15s, box-shadow .15s; }
-.prod-search input:focus-visible { outline: none; border-color: #1a1f26; box-shadow: 0 0 0 3px rgba(26,31,38,.1); }
-.prod-search-clear { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; color: #8a939d; background: none; border: 0; border-radius: 5px; cursor: pointer; }
-.prod-search-clear:hover { color: #1a1f26; background: #f0f2f4; }
-.prod-select { padding: 10px 11px; font: inherit; font-size: 13px; color: #1a1f26; background: #fff; border: 1px solid #d9dee4; border-radius: 9px; cursor: pointer; }
-.prod-select:focus-visible { outline: none; border-color: #1a1f26; box-shadow: 0 0 0 3px rgba(26,31,38,.1); }
 .prod-refresh { margin-left: auto; }
 /* ---------- buttons & icons ---------- */
 .prod-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 16px; color: #1a1f26; background: #fff; border: 1px solid #d9dee4; border-radius: 9px; font-size: 13.5px; font-weight: 600; text-decoration: none; cursor: pointer; transition: border-color .15s, background .15s, transform .05s; }
@@ -1198,19 +673,11 @@ onUnmounted(() => {
 .prod-name-cell { min-width: 150px; }
 .prod-name { font-weight: 600; color: #1a1f26; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prod-name-sub { margin-top: 3px; color: #9aa3ac; font-size: 11px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prod-tenant-cell { color: #4b5563; }
 .prod-time { color: #8a939d; font-size: 12px; white-space: nowrap; }
 .prod-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .pill-dot { width: 6px; height: 6px; border-radius: 50%; }
 .pill-enable { color: #1d714e; background: #e9f6ef; }
 .pill-muted { color: #65707b; background: #f0f2f4; }
-.prod-role-pills { display: flex; flex-wrap: wrap; gap: 5px; max-width: 240px; }
-.pill-role-node_admin { color: #6d28d9; background: #f1eafd; }
-.pill-role-tenant_admin { color: #1d4ed8; background: #e8effd; }
-.pill-role-operator { color: #92400e; background: #fdf0e0; }
-.pill-role-viewer { color: #4b5563; background: #f0f2f4; }
-.prod-scope { color: #4b5563; font-size: 12.5px; cursor: help; }
-.prod-scope-none { color: #a6b0ba; cursor: default; }
 .prod-table .col-actions { text-align: right; }
 .prod-actions { display: inline-flex; gap: 5px; opacity: .55; transition: opacity .15s; }
 .prod-row:hover .prod-actions, .prod-actions:focus-within { opacity: 1; }
@@ -1241,47 +708,19 @@ onUnmounted(() => {
 .prod-empty strong { font-size: 14.5px; }
 .prod-empty p { margin: 0 0 10px; color: #8a939d; font-size: 13px; }
 .prod-empty.denied { margin-top: 24px; }
-/* ---------- pagination ---------- */
-.prod-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
-.prod-page-count { color: #8a939d; font-size: 12px; }
-.prod-page-btns { display: flex; align-items: center; gap: 8px; }
-.prod-page-info { color: #5f6873; font-size: 12px; }
 /* ---------- overlay / modal ---------- */
 .prod-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(13,18,24,.48); backdrop-filter: blur(2px); }
 .prod-modal { width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto; background: #fff; border-radius: 14px; box-shadow: 0 24px 64px rgba(13,18,24,.28); }
 .prod-modal-narrow { max-width: 480px; }
 .prod-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 19px 22px; border-bottom: 1px solid #eef0f3; position: sticky; top: 0; background: #fff; z-index: 2; }
 .prod-modal-head h2 { margin: 0; font-size: 16.5px; display: flex; align-items: center; gap: 10px; }
-.prod-type-badge { display: inline-block; padding: 3px 9px; color: #1a1f26; background: #eef1f4; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
 .prod-form { padding: 20px 22px; display: grid; gap: 14px; }
-.prod-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .prod-field { display: grid; gap: 6px; }
-.prod-field-full { grid-column: 1 / -1; }
-.prod-field label, .prod-field-label { font-size: 12px; font-weight: 700; color: #5f6873; }
+.prod-field label { font-size: 12px; font-weight: 700; color: #5f6873; }
 .prod-field input { width: 100%; padding: 10px 11px; font: inherit; font-size: 13.5px; color: #1a1f26; background: #fff; border: 1px solid #d9dee4; border-radius: 8px; box-sizing: border-box; transition: border-color .15s, box-shadow .15s; }
 .prod-field input:focus-visible { outline: none; border-color: #1a1f26; box-shadow: 0 0 0 3px rgba(26,31,38,.1); }
-.prod-select-full { width: 100%; }
-.prod-select-full:focus-visible { outline: none; border-color: #1a1f26; box-shadow: 0 0 0 3px rgba(26,31,38,.1); }
-.prod-input-action { display: flex; gap: 6px; }
-.prod-input-action input { flex: 1; }
 .prod-meta-hint { margin: 0; color: #8a939d; font-size: 12px; }
 .prod-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
-/* ---------- role chips ---------- */
-.prod-role-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.prod-role-chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; background: #fff; border: 1px solid #d9dee4; border-radius: 9px; font-size: 12.5px; font-weight: 600; color: #4b5563; cursor: pointer; transition: border-color .15s, background .15s; }
-.prod-role-chip:hover { border-color: #aeb7c1; }
-.prod-role-chip input { accent-color: #1a1f26; margin: 0; }
-.prod-role-chip:focus-within { outline: 2px solid #1a1f26; outline-offset: 1px; border-radius: 9px; }
-.prod-role-chip.checked { color: #1a1f26; background: #f1f3f5; border-color: #1a1f26; }
-.prod-role-chip-code { color: #9aa3ac; font-size: 10.5px; }
-/* ---------- region picker ---------- */
-.prod-region-picker { display: grid; max-height: 220px; overflow-y: auto; padding: 6px; background: #f8f9fa; border: 1px solid #e4e7eb; border-radius: 9px; }
-.prod-region-check { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
-.prod-region-check:hover { background: #eef1f4; }
-.prod-region-check input { accent-color: #1a1f26; margin: 0; flex-shrink: 0; }
-.prod-region-check-name { font-weight: 600; color: #1a1f26; white-space: nowrap; }
-.prod-region-check-path { color: #9aa3ac; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prod-region-check:focus-within { outline: 2px solid #1a1f26; outline-offset: -2px; }
 /* ---------- modal transitions ---------- */
 .modal-enter-active, .modal-leave-active { transition: opacity .18s; }
 .modal-enter-active .prod-modal, .modal-leave-active .prod-modal { transition: transform .18s cubic-bezier(.2,.8,.3,1), opacity .18s; }
@@ -1296,7 +735,7 @@ onUnmounted(() => {
 /* ---------- reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {
   .sk, .spinning { animation: none; }
-  .prod-row, .prod-button, .prod-icon, .prod-nav-link, .prod-tab, .prod-role-chip, .prod-search input, .prod-select, .prod-field input { transition: none; }
+  .prod-row, .prod-button, .prod-icon, .prod-nav-link, .prod-tab { transition: none; }
   .modal-enter-active, .modal-leave-active, .toast-enter-active, .toast-leave-active { transition: none; }
   .modal-enter-from, .modal-leave-to, .toast-enter-from, .toast-leave-to { opacity: 1; transform: none; }
 }
@@ -1306,13 +745,9 @@ onUnmounted(() => {
   .prod-brand-text span { display: none; }
   .prod-main { padding: 24px 16px 48px; }
   .prod-stats { grid-template-columns: repeat(2, 1fr); gap: 10px; }
-  .prod-toolbar { flex-wrap: wrap; }
-  .prod-search { max-width: none; flex-basis: 100%; }
-  .prod-refresh { margin-left: 0; }
   .prod-table-wrap { overflow-x: auto; }
-  .prod-table { min-width: 860px; }
+  .prod-table { min-width: 640px; }
   .prod-page-head { flex-direction: column; align-items: stretch; }
   .prod-page-head .prod-button { align-self: flex-start; }
-  .prod-form-grid { grid-template-columns: 1fr; }
 }
 </style>
