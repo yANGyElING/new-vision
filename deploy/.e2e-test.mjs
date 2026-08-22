@@ -7,6 +7,9 @@ if (!ADMIN_PASSWORD) {
   process.exit(1)
 }
 const ADMIN = { tenant: 'default', username: 'admin', password: ADMIN_PASSWORD }
+// unique per-run suffix so the suite is re-runnable against live data
+const S = Date.now().toString(36)
+const NAME = { region: `e2e-region-${S}`, viewer: `e2e-viewer-${S}`, tenant: `e2e-tenant-${S}`, cross: `e2e-op-${S}`, device: `e2e-device-${S}` }
 const ROOT_REGION = '00000000-0000-0000-0000-000000000002'
 
 const results = []
@@ -53,22 +56,22 @@ report('GET /roles -> 4 fixed roles', roles.status === 200 && JSON.stringify(rol
 const regionsBefore = await api('GET', '/api/v1/regions', { token: adminToken })
 report('GET /regions -> tree with root', regionsBefore.status === 200 && Array.isArray(regionsBefore.json) && regionsBefore.json.some((r) => r.id === ROOT_REGION))
 
-const mkRegion = await api('POST', '/api/v1/regions', { token: adminToken, body: { parent_id: ROOT_REGION, name: 'e2e-test-region' } })
+const mkRegion = await api('POST', '/api/v1/regions', { token: adminToken, body: { parent_id: ROOT_REGION, name: NAME.region } })
 report('create region -> 201', mkRegion.status === 201 && !!mkRegion.json?.id, `status=${mkRegion.status}`)
 const regionID = mkRegion.json?.id
 
 const mkViewer = await api('POST', '/api/v1/users', {
   token: adminToken,
-  body: { tenant_id: '', username: 'e2e-viewer', password: 'ViewerPass123', display_name: 'E2E Viewer', roles: ['viewer'], region_ids: regionID ? [regionID] : [] },
+  body: { tenant_id: '', username: NAME.viewer, password: 'ViewerPass123', display_name: 'E2E Viewer', roles: ['viewer'], region_ids: regionID ? [regionID] : [] },
 })
 report('create user (viewer) -> 201 + roles', mkViewer.status === 201 && JSON.stringify(mkViewer.json?.roles) === '["viewer"]', `status=${mkViewer.status}`)
 const viewerID = mkViewer.json?.id
 
 const listUsers = await api('GET', '/api/v1/users', { token: adminToken })
-report('GET /users contains e2e-viewer', listUsers.status === 200 && listUsers.json?.some((u) => u.username === 'e2e-viewer'))
+report('GET /users contains e2e-viewer', listUsers.status === 200 && listUsers.json?.some((u) => u.username === NAME.viewer))
 
 // ---------- C. casbin enforcement (viewer) ----------
-const viewerLogin = await api('POST', '/api/v1/auth/login', { body: { tenant: 'default', username: 'e2e-viewer', password: 'ViewerPass123' } })
+const viewerLogin = await api('POST', '/api/v1/auth/login', { body: { tenant: 'default', username: NAME.viewer, password: 'ViewerPass123' } })
 report('viewer login -> 200', viewerLogin.status === 200 && !!viewerLogin.json?.token, `status=${viewerLogin.status}`)
 const viewerToken = viewerLogin.json?.token
 
@@ -90,7 +93,7 @@ report('PATCH viewer -> operator', patchRole.status === 200 && JSON.stringify(pa
 
 const mkDevice = await api('POST', '/api/v1/devices', {
   token: adminToken,
-  body: { region_id: regionID, center_code: '34029998', device_type: '132', device_name: 'e2e-device', manufacturer: 'e2e', sip_realm: '3402000000', password: 'devpass', enabled: false },
+  body: { region_id: regionID, center_code: '34029998', device_type: '132', device_name: NAME.device, manufacturer: 'e2e', sip_realm: '3402000000', password: 'devpass', enabled: false },
 })
 report('admin create device -> 201', mkDevice.status === 201 && !!mkDevice.json?.id, `status=${mkDevice.status} id=${mkDevice.json?.device_access_id}`)
 const deviceID = mkDevice.json?.id
@@ -109,28 +112,28 @@ report('operator(old token) PATCH enable -> 200 (roles live-reloaded)', opEnable
 const resetPw = await api('POST', `/api/v1/users/${viewerID}/password`, { token: adminToken, body: { password: 'NewPass456' } })
 report('reset password -> 204', resetPw.status === 204, `status=${resetPw.status}`)
 
-const reLogin = await api('POST', '/api/v1/auth/login', { body: { tenant: 'default', username: 'e2e-viewer', password: 'NewPass456' } })
+const reLogin = await api('POST', '/api/v1/auth/login', { body: { tenant: 'default', username: NAME.viewer, password: 'NewPass456' } })
 report('login with new password -> 200', reLogin.status === 200, `status=${reLogin.status}`)
 
 const disable = await api('PATCH', `/api/v1/users/${viewerID}`, { token: adminToken, body: { status: 'disabled' } })
 report('PATCH status=disabled -> 200', disable.status === 200 && disable.json?.status === 'disabled', `status=${disable.status}`)
 
-const disabledLogin = await api('POST', '/api/v1/auth/login', { body: { tenant: 'default', username: 'e2e-viewer', password: 'NewPass456' } })
+const disabledLogin = await api('POST', '/api/v1/auth/login', { body: { tenant: 'default', username: NAME.viewer, password: 'NewPass456' } })
 report('disabled user login -> 401', disabledLogin.status === 401, `status=${disabledLogin.status}`)
 
 // ---------- F. multi-tenant ----------
-const mkTenant = await api('POST', '/api/v1/tenants', { token: adminToken, body: { name: 'e2e-tenant' } })
+const mkTenant = await api('POST', '/api/v1/tenants', { token: adminToken, body: { name: NAME.tenant } })
 report('create tenant -> 201', mkTenant.status === 201 && !!mkTenant.json?.id, `status=${mkTenant.status}`)
 const tenantID = mkTenant.json?.id
 
 const mkCross = await api('POST', '/api/v1/users', {
   token: adminToken,
-  body: { tenant_id: tenantID, username: 'e2e-op', password: 'OpPass789', display_name: 'E2E Cross Tenant', roles: ['operator'], region_ids: [] },
+  body: { tenant_id: tenantID, username: NAME.cross, password: 'OpPass789', display_name: 'E2E Cross Tenant', roles: ['operator'], region_ids: [] },
 })
 report('node_admin creates user in other tenant -> 201', mkCross.status === 201 && mkCross.json?.tenant_id === tenantID, `status=${mkCross.status}`)
 const crossUserID = mkCross.json?.id
 
-const crossLogin = await api('POST', '/api/v1/auth/login', { body: { tenant: 'e2e-tenant', username: 'e2e-op', password: 'OpPass789' } })
+const crossLogin = await api('POST', '/api/v1/auth/login', { body: { tenant: NAME.tenant, username: NAME.cross, password: 'OpPass789' } })
 report('cross-tenant user login -> 200', crossLogin.status === 200, `status=${crossLogin.status}`)
 
 const crossForbidden = await api('GET', '/api/v1/users', { token: crossLogin.json?.token })
@@ -149,7 +152,7 @@ report('cleanup: delete device -> 204', delDevice.status === 204)
 const delViewer = await api('DELETE', `/api/v1/users/${viewerID}`, { token: adminToken })
 report('cleanup: delete e2e-viewer -> 204', delViewer.status === 204)
 
-const delCross = await api('DELETE', `/api/v1/users/${crossUserID}`, { token: adminToken, body: undefined })
+const delCross = await api('DELETE', `/api/v1/users/${crossUserID}?tenant_id=${tenantID}`, { token: adminToken, body: undefined })
 report('cleanup: delete cross-tenant user -> 204', delCross.status === 204)
 
 const delRegion = await api('DELETE', `/api/v1/regions/${regionID}`, { token: adminToken })
