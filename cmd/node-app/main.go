@@ -24,7 +24,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	app, err := nodeapp.New(ctx, cfg, version)
+	app, err := nodeapp.New(ctx, cfg, version, logger)
 	if err != nil {
 		logger.Error("application initialization failed", "error", err)
 		os.Exit(1)

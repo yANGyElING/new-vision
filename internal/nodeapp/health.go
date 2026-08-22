@@ -26,12 +26,6 @@ func NewHandler(postgres, redis Probe, timeout time.Duration, metrics http.Handl
 	return newHandler(postgres, redis, timeout, metrics)
 }
 
-func NewConsoleHandler(postgres, redis Probe, timeout time.Duration, metrics http.Handler, deps ConsoleDeps) http.Handler {
-	mux := newHandler(postgres, redis, timeout, metrics)
-	registerConsoleRoutes(mux, deps)
-	return mux
-}
-
 func newHandler(postgres, redis Probe, timeout time.Duration, metrics http.Handler) *http.ServeMux {
 	h := &Handler{postgres: postgres, redis: redis, timeout: timeout, metrics: metrics}
 	mux := http.NewServeMux()

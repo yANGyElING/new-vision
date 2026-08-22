@@ -51,6 +51,7 @@ export function deviceTypeLabel(code: string): string {
 }
 
 export type CreateDeviceInput = {
+  region_id: string
   center_code: string
   device_type: string
   device_name: string

@@ -7,6 +7,7 @@ import {
 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import { fetchHealth, type HealthState } from '@/api/health'
+import { me } from '@/api/auth'
 import {
   listDevices, createDevice, setDeviceEnabled, updateDeviceMeta, deleteDevice,
   previewAccessID, deviceTypeLabel, DEVICE_TYPES, type Device,
@@ -120,12 +121,13 @@ const createOpen = ref(false)
 const typePickerOpen = ref(false)
 const creating = ref(false)
 const createError = ref('')
+const regionScopes = ref<string[]>([])
 const createForm = ref<{
   device_type: string; center_code: string; device_name: string; manufacturer: string
-  sip_realm: string; password: string; enabled: boolean
+  sip_realm: string; password: string; enabled: boolean; region_id: string
 }>({
   device_type: DEVICE_TYPES[0].code, center_code: '34020000', device_name: '', manufacturer: '',
-  sip_realm: '3402000000', password: '', enabled: true,
+  sip_realm: '3402000000', password: '', enabled: true, region_id: '',
 })
 
 const manufacturerOptions = ref(['海康威视', '大华', '宇视', '华为', '天地伟业', '科达', '其他'])
@@ -133,6 +135,8 @@ const manufacturerFilter = ref('')
 const manufacturerOpen = ref(false)
 const addingManufacturer = ref(false)
 const newManufacturer = ref('')
+
+const nodeAdmin = ref(false)
 
 const filteredManufacturers = computed(() => {
   const q = manufacturerFilter.value.trim().toLowerCase()
@@ -176,9 +180,14 @@ function closeCreate() { createOpen.value = false; createError.value = '' }
 
 async function submitCreate() {
   createError.value = ''
+  if (!createForm.value.region_id) {
+    createError.value = '请选择区域'
+    return
+  }
   creating.value = true
   try {
     const device = await createDevice({
+      region_id: createForm.value.region_id,
       center_code: createForm.value.center_code,
       device_type: createForm.value.device_type,
       device_name: createForm.value.device_name.trim(),
@@ -289,6 +298,11 @@ function typeIcon(code: string) {
 onMounted(() => {
   void loadDevices()
   void refreshHealth()
+  void me().then((info) => {
+    regionScopes.value = info.region_scopes ?? []
+    nodeAdmin.value = (info.roles ?? []).includes('node_admin')
+    if (regionScopes.value.length > 0) createForm.value.region_id = regionScopes.value[0]
+  }).catch(() => {})
   const timer = window.setInterval(refreshHealth, 30000)
   onUnmounted(() => {
     window.clearInterval(timer)
@@ -309,6 +323,7 @@ onMounted(() => {
       </div>
       <nav class="prod-nav" aria-label="主导航">
         <RouterLink to="/devices" class="prod-nav-link active" aria-current="page">设备管理</RouterLink>
+        <RouterLink v-if="nodeAdmin" to="/identity" class="prod-nav-link">权限管理</RouterLink>
         <RouterLink to="/" class="prod-nav-link">测试控制台</RouterLink>
       </nav>
       <div class="prod-topbar-right">
@@ -543,6 +558,13 @@ onMounted(() => {
               </div>
               <form class="prod-form" @submit.prevent="submitCreate">
                 <div class="prod-form-grid">
+                  <div class="prod-field prod-field-full">
+                    <label for="prod-create-region">区域</label>
+                    <select id="prod-create-region" v-model="createForm.region_id" class="prod-select prod-select-full" required>
+                      <option v-for="rid in regionScopes" :key="rid" :value="rid">{{ rid }}</option>
+                    </select>
+                    <span v-if="regionScopes.length === 0" class="prod-meta-hint">当前账号没有可用区域范围，请联系管理员分配。</span>
+                  </div>
                   <div class="prod-field">
                     <label for="prod-create-name">设备名称</label>
                     <input id="prod-create-name" v-model="createForm.device_name" required maxlength="255" placeholder="如：东门 1 号摄像机" />
@@ -827,6 +849,8 @@ onMounted(() => {
 .prod-field label { font-size: 12px; font-weight: 700; color: #5f6873; }
 .prod-field input { width: 100%; padding: 10px 11px; font: inherit; font-size: 13.5px; color: #1a1f26; background: #fff; border: 1px solid #d9dee4; border-radius: 8px; box-sizing: border-box; transition: border-color .15s, box-shadow .15s; }
 .prod-field input:focus-visible { outline: none; border-color: #1a1f26; box-shadow: 0 0 0 3px rgba(26,31,38,.1); }
+.prod-select-full { width: 100%; }
+.prod-select-full:focus-visible { outline: none; border-color: #1a1f26; box-shadow: 0 0 0 3px rgba(26,31,38,.1); }
 .prod-checkbox { display: inline-flex; align-items: center; gap: 8px; font-size: 13px !important; font-weight: 600 !important; color: #1a1f26 !important; padding-top: 22px; cursor: pointer; }
 .prod-input-action { display: flex; gap: 6px; }
 .prod-input-action input { flex: 1; }

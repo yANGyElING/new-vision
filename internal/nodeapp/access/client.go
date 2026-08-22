@@ -1,4 +1,4 @@
-package nodeapp
+package access
 
 import (
 	"bytes"
@@ -15,74 +15,7 @@ import (
 
 const maxRPCResponseBytes = 16 << 20
 
-type AccessProfile struct {
-	DeviceAccessID  string `json:"device_access_id"`
-	SIPUsername     string `json:"sip_username"`
-	SIPRealm        string `json:"sip_realm"`
-	DigestAlgorithm string `json:"digest_algorithm"`
-	DigestHA1       string `json:"digest_ha1"`
-	Enabled         bool   `json:"enabled"`
-	Version         int64  `json:"version"`
-}
-
-type ProfileResult struct {
-	Status  string `json:"status"`
-	Version int64  `json:"version,omitempty"`
-}
-
-type RuntimeState struct {
-	State         string    `json:"state"`
-	Reason        string    `json:"reason,omitempty"`
-	RemoteAddress string    `json:"remote_address,omitempty"`
-	ExpiresAt     time.Time `json:"expires_at,omitempty"`
-	LastSeen      time.Time `json:"last_seen,omitempty"`
-	SessionEpoch  string    `json:"session_epoch,omitempty"`
-	Stale         bool      `json:"stale"`
-}
-
-type RuntimeRegistration struct {
-	DeviceAccessID string    `json:"device_access_id"`
-	State          string    `json:"state"`
-	Reason         string    `json:"reason,omitempty"`
-	RemoteAddress  string    `json:"remote_address,omitempty"`
-	ExpiresAt      time.Time `json:"expires_at,omitempty"`
-	LastSeen       time.Time `json:"last_seen,omitempty"`
-}
-
-type RuntimeSnapshot struct {
-	AccessInstanceID string                `json:"access_instance_id"`
-	SessionEpoch     string                `json:"session_epoch"`
-	SnapshotAt       time.Time             `json:"snapshot_at"`
-	LatestSequence   int64                 `json:"latest_sequence"`
-	Registrations    []RuntimeRegistration `json:"registrations"`
-}
-
-type AccessEventPayload struct {
-	State         string    `json:"state"`
-	Reason        string    `json:"reason"`
-	RemoteAddress string    `json:"remote_address,omitempty"`
-	ExpiresAt     time.Time `json:"expires_at,omitempty"`
-	LastSeen      time.Time `json:"last_seen,omitempty"`
-}
-
-type AccessEvent struct {
-	EventID          string             `json:"event_id"`
-	Sequence         int64              `json:"sequence"`
-	AccessInstanceID string             `json:"access_instance_id"`
-	SessionEpoch     string             `json:"session_epoch"`
-	Type             string             `json:"type"`
-	OccurredAt       time.Time          `json:"occurred_at"`
-	DeviceAccessID   string             `json:"device_access_id"`
-	Payload          AccessEventPayload `json:"payload"`
-}
-
-type PollResult struct {
-	AccessInstanceID string        `json:"access_instance_id"`
-	SessionEpoch     string        `json:"session_epoch"`
-	LatestSequence   int64         `json:"latest_sequence"`
-	Events           []AccessEvent `json:"events"`
-}
-
+// AccessAPI is the node-access JSON-RPC surface used by node-app.
 type AccessAPI interface {
 	ApplyDeviceProfile(context.Context, AccessProfile) (ProfileResult, error)
 	RemoveDeviceProfile(context.Context, string, int64) (ProfileResult, error)

@@ -31,6 +31,9 @@ type Config struct {
 	AccessInstanceID   string
 	SIPHost            string
 	SIPPort            int
+	JWTSecret          string
+	JWTTTL             time.Duration
+	SeedAdminPassword  string
 }
 
 func LoadConfig(lookup platform.LookupEnv) (Config, error) {
@@ -112,6 +115,19 @@ func LoadConfig(lookup platform.LookupEnv) (Config, error) {
 		return Config{}, err
 	}
 
+	jwtSecret, err := platform.Required(lookup, "NV_JWT_SECRET")
+	if err != nil {
+		return Config{}, err
+	}
+	jwtTTL, err := platform.Duration(lookup, "NV_JWT_TTL", 24*time.Hour, 30*24*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	seedAdminPassword := valueOrDefault(lookup, "NV_SEED_ADMIN_PASSWORD", "")
+	if len(seedAdminPassword) > 256 {
+		return Config{}, fmt.Errorf("NV_SEED_ADMIN_PASSWORD must be at most 256 bytes")
+	}
+
 	return Config{
 		HTTP: httpConfig, HealthTimeout: healthTimeout,
 		PostgresHost: postgresHost, PostgresPort: postgresPort, PostgresDatabase: postgresDatabase,
@@ -121,6 +137,7 @@ func LoadConfig(lookup platform.LookupEnv) (Config, error) {
 		AccessRPCURL: accessRPCURL, AccessRPCTimeout: accessRPCTimeout,
 		AccessPollInterval: accessPollInterval, AccessInstanceID: accessInstanceID,
 		SIPHost: sipHost, SIPPort: sipPort,
+		JWTSecret: jwtSecret, JWTTTL: jwtTTL, SeedAdminPassword: seedAdminPassword,
 	}, nil
 }
 

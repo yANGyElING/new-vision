@@ -6,6 +6,7 @@ import {
 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import { fetchHealth, type CheckState, type HealthState } from '@/api/health'
+import { me } from '@/api/auth'
 import { listDevices, createDevice, setDeviceEnabled, deleteDevice, previewAccessID, deviceTypeLabel, DEVICE_TYPES, type Device } from '@/api/devices'
 import { getSnapshot, pollEvents, ackEvents, type RuntimeSnapshot, type AccessEvent } from '@/api/access'
 import { sipRegister, sipKeepAlive, sipUnregister } from '@/api/test'
@@ -81,6 +82,7 @@ const createForm = ref<{
   sip_realm: string
   password: string
   enabled: boolean
+  region_id: string
 }>({
   device_type: DEVICE_TYPES[0].code,
   center_code: '34020000',
@@ -89,12 +91,15 @@ const createForm = ref<{
   sip_realm: '3402000000',
   password: '',
   enabled: true,
+  region_id: '',
 })
 const creating = ref(false)
 const createError = ref('')
 const createSuccess = ref('')
 const createOpen = ref(false)
 const typePickerOpen = ref(false)
+const regionScopes = ref<string[]>([])
+const nodeAdmin = ref(false)
 
 // Notion-style manufacturer select: preset options plus inline "add new".
 const manufacturerOptions = ref(['海康威视', '大华', '宇视', '华为', '天地伟业', '科达', '其他'])
@@ -169,9 +174,14 @@ function closeCreate() {
 async function submitCreate() {
   createError.value = ''
   createSuccess.value = ''
+  if (!createForm.value.region_id) {
+    createError.value = '请选择区域'
+    return
+  }
   creating.value = true
   try {
     const device = await createDevice({
+      region_id: createForm.value.region_id,
       center_code: createForm.value.center_code,
       device_type: createForm.value.device_type,
       device_name: createForm.value.device_name.trim(),
@@ -320,6 +330,11 @@ onMounted(() => {
   void refreshHealth()
   void loadDevices()
   void refreshSnapshot()
+  void me().then((info) => {
+    regionScopes.value = info.region_scopes ?? []
+    nodeAdmin.value = (info.roles ?? []).includes('node_admin')
+    if (regionScopes.value.length > 0) createForm.value.region_id = regionScopes.value[0]
+  }).catch(() => {})
 })
 onUnmounted(() => activeHealthController?.abort())
 </script>
@@ -333,6 +348,7 @@ onUnmounted(() => activeHealthController?.abort())
       </RouterLink>
       <nav aria-label="主导航">
         <RouterLink class="nav-link" to="/devices">设备管理</RouterLink>
+        <RouterLink v-if="nodeAdmin" class="nav-link" to="/identity">权限管理</RouterLink>
         <span class="test-notice"><Zap :size="14" />测试专用界面，生产前需启用认证</span>
       </nav>
     </header>
@@ -410,6 +426,13 @@ onUnmounted(() => activeHealthController?.abort())
           <div class="create-form-head">
             <span class="state-pill pill-up">{{ deviceTypeLabel(createForm.device_type) }}</span>
             <code v-if="accessIDPreview" class="mono">编码预览：{{ accessIDPreview }}·{{ '序号后端分配' }}</code>
+          </div>
+          <div class="field">
+            <label for="create-region">区域</label>
+            <select id="create-region" v-model="createForm.region_id" class="create-select" required>
+              <option v-for="rid in regionScopes" :key="rid" :value="rid">{{ rid }}</option>
+            </select>
+            <span v-if="regionScopes.length === 0" class="hint">当前账号没有可用区域范围，请联系管理员分配。</span>
           </div>
           <div class="field">
             <label for="create-name">设备名称</label>

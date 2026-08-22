@@ -63,6 +63,9 @@ services:
       NV_ACCESS_INSTANCE_ID: ${NV_ACCESS_INSTANCE_ID}
       NV_SIP_HOST: ${NV_SIP_HOST:-node-access}
       NV_SIP_PORT: ${NV_SIP_PORT:-5060}
+      NV_JWT_SECRET: ${NV_JWT_SECRET}
+      NV_JWT_TTL: ${NV_JWT_TTL:-24h}
+      NV_SEED_ADMIN_PASSWORD: ${NV_SEED_ADMIN_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_started

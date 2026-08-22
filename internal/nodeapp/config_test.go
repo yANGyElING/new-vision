@@ -47,6 +47,7 @@ func validEnvironment() map[string]string {
 		"NV_POSTGRES_PASSWORD": "public-local-password",
 		"NV_REDIS_HOST":        "redis",
 		"NV_REDIS_PASSWORD":    "public-local-password",
+		"NV_JWT_SECRET":        "0123456789abcdef0123456789abcdef0123456789abcdef",
 	}
 }
 

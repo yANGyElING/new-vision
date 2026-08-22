@@ -1,4 +1,4 @@
-package nodeapp
+package access
 
 import (
 	"context"
@@ -29,7 +29,6 @@ func (p *RedisProjection) Get(ctx context.Context, deviceID string) (*RuntimeSta
 	return decodeRuntimeState(values)
 }
 
-// GetMany loads runtime states for many devices in a single round trip.
 func (p *RedisProjection) GetMany(ctx context.Context, ids []string) (map[string]*RuntimeState, error) {
 	if len(ids) == 0 {
 		return map[string]*RuntimeState{}, nil
