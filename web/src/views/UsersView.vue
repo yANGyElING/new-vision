@@ -209,11 +209,20 @@ function closeUserModal() {
   userFormError.value = ''
 }
 
-function toggleRole(role: string) {
-  const roles = userForm.value.roles
-  const idx = roles.indexOf(role)
-  if (idx >= 0) roles.splice(idx, 1)
-  else roles.push(role)
+// The role matrix is cumulative (viewer ⊂ operator ⊂ tenant_admin ⊂
+// node_admin), so one role fully describes a user's privileges; pick the
+// highest when editing a user that somehow holds several.
+const ROLE_ORDER = ['node_admin', 'tenant_admin', 'operator', 'viewer']
+
+const currentRole = computed(() => {
+  for (const role of ROLE_ORDER) {
+    if (userForm.value.roles.includes(role)) return role
+  }
+  return ''
+})
+
+function pickRole(role: string) {
+  userForm.value.roles = role ? [role] : []
 }
 
 function toggleRegionScope(id: string) {
@@ -645,20 +654,23 @@ onUnmounted(() => {
                     <button class="cg-inset-btn far" type="button" aria-label="生成随机密码" title="生成随机密码" @click="generatePassword"><KeyRound :size="15" /></button>
                   </div>
                 </div>
+                <div class="cg-divider" aria-hidden="true"><span>权限配置 · 可不选，创建后随时调整</span></div>
                 <div class="cg-field cg-field-full">
-                  <span class="cg-field-label">角色（可多选）</span>
-                  <div class="cg-roles" role="group" aria-label="角色选择">
+                  <span class="cg-field-label">角色</span>
+                  <div class="cg-role-row" role="radiogroup" aria-label="角色选择">
+                    <label class="cg-role-pill" :class="{ on: currentRole === '' }">
+                      <input type="radio" name="usr-role" value="" :checked="currentRole === ''" @change="pickRole('')" />
+                      暂不分配
+                    </label>
                     <label
-                      v-for="role in availableRoles" :key="role" class="cg-role"
-                      :class="{ checked: userForm.roles.includes(role) }" :title="roleHint(role)"
+                      v-for="role in availableRoles" :key="role" class="cg-role-pill"
+                      :class="{ on: currentRole === role }"
                     >
-                      <input type="checkbox" :checked="userForm.roles.includes(role)" @change="toggleRole(role)" />
-                      <span class="cg-role-check"><Check :size="12" :stroke-width="3" /></span>
-                      <span class="cg-role-name">{{ roleLabel(role) }}</span>
-                      <span class="cg-role-code mono">{{ role }}</span>
+                      <input type="radio" name="usr-role" :value="role" :checked="currentRole === role" @change="pickRole(role)" />
+                      {{ roleLabel(role) }}
                     </label>
                   </div>
-                  <span class="cg-hint">角色决定功能权限，矩阵由服务端固定，变更立即生效。</span>
+                  <span class="cg-hint">{{ currentRole ? roleHint(currentRole) : '暂不分配：用户可登录，但暂时没有任何功能与数据权限。' }}</span>
                 </div>
                 <div class="cg-field cg-field-full">
                   <span class="cg-field-label">区域范围（数据权限，可多选）</span>
@@ -896,20 +908,18 @@ onUnmounted(() => {
 .cg-modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 4px; }
 
 /* =============== role selection =============== */
-.cg-roles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.cg-role { position: relative; display: flex; align-items: center; gap: 10px; padding: 11px 12px; background: #fff; border: 1px solid #e3e6ea; border-radius: 12px; font-size: 13px; font-weight: 600; color: #454f5b; cursor: pointer; transition: border-color .15s, background .15s; }
-.cg-role:hover { border-color: #a7aeb8; }
-.cg-role:focus-within { outline: 2px solid #10151b; outline-offset: 1px; border-radius: 12px; }
-.cg-role.checked { color: #10151b; background: #fbfcfd; border-color: #10151b; }
-.cg-role input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-.cg-role-check { display: grid; place-items: center; flex-shrink: 0; width: 19px; height: 19px; color: transparent; background: #fff; border: 1.5px solid #c6ccd4; border-radius: 999px; transition: background .15s, border-color .15s, color .15s; }
-.cg-role.checked .cg-role-check { color: #fff; background: #0f141a; border-color: #0f141a; }
-.cg-role-name { white-space: nowrap; }
-.cg-role-code { margin-left: auto; color: #9aa3ad; font-size: 10.5px; }
+.cg-divider { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; margin-top: 2px; color: #9aa3ad; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.cg-divider::after { content: ''; flex: 1; height: 1px; background: #eef0f3; }
+.cg-role-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.cg-role-pill { position: relative; display: inline-flex; align-items: center; padding: 8px 15px; background: #fff; border: 1px solid #e3e6ea; border-radius: 999px; font-size: 13px; font-weight: 600; color: #454f5b; cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
+.cg-role-pill:hover { border-color: #a7aeb8; }
+.cg-role-pill:focus-within { outline: 2px solid #10151b; outline-offset: 1px; }
+.cg-role-pill.on { color: #fff; background: #0f141a; border-color: #0f141a; }
+.cg-role-pill input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 
 /* =============== region picker =============== */
-.cg-region-picker { display: grid; gap: 1px; max-height: 224px; overflow-y: auto; padding: 6px; background: #f9fafb; border: 1px solid #eceef1; border-radius: 12px; }
-.cg-region { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 9px; font-size: 13px; cursor: pointer; }
+.cg-region-picker { display: grid; gap: 1px; max-height: 216px; overflow-y: auto; padding: 5px; background: #fafbfc; border: 1px solid #eef0f3; border-radius: 12px; }
+.cg-region { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; font-size: 13px; cursor: pointer; }
 .cg-region:hover { background: #f2f4f6; }
 .cg-region:focus-within { outline: 2px solid #10151b; outline-offset: -2px; }
 .cg-region input { accent-color: #0f141a; margin: 0; flex-shrink: 0; width: 15px; height: 15px; }
@@ -930,7 +940,7 @@ onUnmounted(() => {
 /* =============== reduced motion =============== */
 @media (prefers-reduced-motion: reduce) {
   .sk, .spinning { animation: none; }
-  .cg-row, .cg-btn-primary, .cg-act, .cg-icon-btn, .cg-btn-quiet, .page-nav-link, .cg-role, .cg-search, .cg-select, .cg-field input { transition: none; }
+  .cg-row, .cg-btn-primary, .cg-act, .cg-icon-btn, .cg-btn-quiet, .page-nav-link, .cg-role-pill, .cg-search, .cg-select, .cg-field input { transition: none; }
   .modal-enter-active, .modal-leave-active, .toast-enter-active, .toast-leave-active { transition: none; }
   .modal-enter-from, .modal-leave-to, .toast-enter-from, .toast-leave-to { opacity: 1; transform: none; }
   .toast-enter-from, .toast-leave-to { transform: translate(-50%, 0); }
@@ -953,7 +963,6 @@ onUnmounted(() => {
   .cg-card.cg-table-wrap { overflow-x: auto; }
   .cg-table { min-width: 860px; }
   .cg-form-grid { grid-template-columns: 1fr; }
-  .cg-roles { grid-template-columns: 1fr; }
   .cg-modal { border-radius: 16px; }
 }
 </style>
