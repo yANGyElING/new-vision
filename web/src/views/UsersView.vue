@@ -5,6 +5,7 @@ import {
   KeyRound, Monitor, Pause, Play, RefreshCw, Search, ShieldCheck, UserPlus, Users, X,
 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
+import { useDevice } from '@/composables/useDevice'
 import { fetchHealth, type HealthState } from '@/api/health'
 import { me } from '@/api/auth'
 import {
@@ -12,6 +13,9 @@ import {
   setUserPassword, updateUser,
   type IdentityUser, type Region, type Tenant,
 } from '@/api/identity'
+
+// ---------- device detection ----------
+const { isDesktop } = useDevice()
 
 // ---------- health band ----------
 const health = ref<HealthState>({ kind: 'loading' })
@@ -581,7 +585,7 @@ onUnmounted(() => {
         </div>
 
         <!-- table -->
-        <div v-else-if="filteredUsers.length > 0" class="ios-card ios-table-card">
+        <div v-else-if="isDesktop && filteredUsers.length > 0" class="ios-card ios-table-card">
           <div class="ios-thead" role="row">
             <div role="columnheader">用户</div>
             <div role="columnheader">租户</div>
@@ -623,6 +627,39 @@ onUnmounted(() => {
                 </button>
                 <button class="ios-act danger" type="button" :disabled="userBusy[user.id] === 'delete' || user.id === currentUser?.id" :title="user.id === currentUser?.id ? '不能删除自己的账号' : '删除'" :aria-label="user.id === currentUser?.id ? '不能删除自己的账号' : '删除'" @click="removeUser(user)"><Trash2 :size="15" /></button>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- mobile card list -->
+        <div v-else-if="!isDesktop && filteredUsers.length > 0" class="ios-card-list" aria-label="用户列表">
+          <div v-for="user in pageUsers" :key="user.id" class="ios-card-item">
+            <div class="ios-card-header">
+              <span class="ios-avatar" aria-hidden="true">{{ user.username.charAt(0).toUpperCase() }}</span>
+              <div class="ios-card-user">
+                <div class="ios-user-name">{{ user.username }}<span v-if="user.id === currentUser?.id" class="ios-self">本人</span></div>
+                <div class="ios-user-sub">{{ user.display_name || '未设置显示名' }}</div>
+              </div>
+            </div>
+            <div class="ios-card-row">
+              <span class="ios-tenant"><Building2 :size="14" :stroke-width="2" />{{ tenantNameByID.get(user.tenant_id) ?? user.tenant_id }}</span>
+            </div>
+            <div class="ios-card-row">
+              <span v-for="role in user.roles" :key="role" class="ios-role" :class="`role-${role}`" :title="roleHint(role)">{{ roleLabel(role) }}</span>
+              <span v-if="user.roles.length === 0" class="ios-role role-none">无角色</span>
+              <span class="ios-status">
+                <span class="ios-dot" :class="user.status === 'active' ? 'green' : 'gray'" />
+                {{ user.status === 'active' ? '启用' : '停用' }}
+              </span>
+            </div>
+            <div class="ios-card-row ios-card-time mono">{{ formatDate(user.created_at) }}</div>
+            <div class="ios-card-actions">
+              <button class="ios-act" type="button" title="编辑用户" aria-label="编辑用户" @click="openUserEdit(user)"><Edit3 :size="18" /></button>
+              <button class="ios-act" type="button" title="重置密码" aria-label="重置密码" @click="openPasswordModal(user)"><KeyRound :size="18" /></button>
+              <button class="ios-act" type="button" :disabled="userBusy[user.id] === 'status' || user.id === currentUser?.id" :title="user.status === 'active' ? '停用' : '启用'" :aria-label="user.status === 'active' ? '停用' : '启用'" @click="toggleUserStatus(user)">
+                <Pause v-if="user.status === 'active'" :size="18" /><Play v-else :size="18" />
+              </button>
+              <button class="ios-act danger" type="button" :disabled="userBusy[user.id] === 'delete' || user.id === currentUser?.id" :title="user.id === currentUser?.id ? '不能删除自己的账号' : '删除'" :aria-label="user.id === currentUser?.id ? '不能删除自己的账号' : '删除'" @click="removeUser(user)"><Trash2 :size="18" /></button>
             </div>
           </div>
         </div>
@@ -953,6 +990,15 @@ onUnmounted(() => {
 .ios-alert p { margin: 3px 0 0; color: #b06565; font-size: 12.5px; }
 .ios-alert .ios-btn-quiet { margin-left: auto; color: #a14444; }
 .ios-alert .ios-btn-quiet:hover { color: #7c3535; background: #fbe7e7; }
+/* ---------- mobile card list ---------- */
+.ios-card-list { display: flex; flex-direction: column; gap: 12px; }
+.ios-card-item { display: flex; flex-direction: column; gap: 8px; padding: 16px; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.ios-card-header { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.ios-card-user { min-width: 0; }
+.ios-card-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.ios-card-time { color: #3A3A3C; font-size: 13px; }
+.ios-card-actions { display: flex; gap: 6px; margin-top: 2px; }
+.ios-card-actions .ios-act { width: 44px; height: 44px; }
 .ios-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 16px; padding: 56px 20px; text-align: center; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
 .ios-empty-icon { display: inline-flex; align-items: center; justify-content: center; width: 54px; height: 54px; margin-bottom: 6px; color: #8E8E93; background: #F2F2F7; border-radius: 999px; }
 .ios-empty strong { font-size: 14.5px; color: #1C1C1E; }
@@ -1076,10 +1122,13 @@ onUnmounted(() => {
   .nt-modal-head { padding: 20px 20px 0; }
   .nt-modal { border-radius: 8px; }
 }
-@media (max-width: 560px) {
+@media (max-width: 640px) {
   .ios-head-inner { flex-direction: column; align-items: stretch; }
   .ios-head .ios-btn-primary { align-self: flex-start; }
   .nt-row { flex-direction: column; gap: 6px; }
   .nt-label { flex-basis: auto; padding-top: 0; }
+  /* 移动端：操作按钮常显 + 触控目标 ≥44px */
+  .ios-act { opacity: 1 !important; width: 44px; height: 44px; }
+  .ios-actions { opacity: 1; }
 }
 </style>

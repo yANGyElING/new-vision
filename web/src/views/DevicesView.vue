@@ -6,6 +6,7 @@ import {
   Search, Server, ShieldCheck, Trash2, WifiOff, X, Zap,
 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
+import { useDevice } from '@/composables/useDevice'
 import { fetchHealth, type HealthState } from '@/api/health'
 import { me } from '@/api/auth'
 import {
@@ -37,6 +38,9 @@ const healthSummary = computed(() => {
   }
 })
 const healthTone = computed(() => (health.value.kind === 'ready' ? 'up' : health.value.kind === 'degraded' ? 'warn' : 'down'))
+
+// ---------- device detection ----------
+const { isDesktop } = useDevice()
 
 function healthCheck(name: string): string {
   if (health.value.kind === 'ready' || health.value.kind === 'degraded') {
@@ -442,7 +446,7 @@ onMounted(() => {
       </div>
 
       <!-- table -->
-      <div v-else-if="filteredDevices.length > 0" class="prod-table-card">
+      <div v-else-if="isDesktop && filteredDevices.length > 0" class="prod-table-card">
         <div class="prod-thead" role="row">
           <div role="columnheader">名称</div>
           <div role="columnheader">接入 ID</div>
@@ -493,6 +497,39 @@ onMounted(() => {
               </button>
               <button class="prod-act danger" type="button" :disabled="busy[device.id] === 'delete'" title="删除" aria-label="删除" @click="removeDevice(device)"><Trash2 :size="15" /></button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- mobile card list -->
+      <div v-else-if="!isDesktop && filteredDevices.length > 0" class="prod-card-list" aria-label="设备列表">
+        <div v-for="device in pageDevices" :key="device.id" class="prod-card-item">
+          <div class="prod-card-main">
+            <span class="prod-card-name">{{ device.device_name || '未命名' }}</span>
+            <span class="prod-card-sub mono">{{ deviceTypeLabel(device.device_type) }} · {{ device.manufacturer || '—' }}</span>
+          </div>
+          <div class="prod-card-id mono">{{ device.device_access_id }}</div>
+          <div class="prod-card-status">
+            <span class="prod-pill" :class="device.enabled ? 'pill-enable' : 'pill-muted'">
+              <span class="pill-dot" :class="device.enabled ? 'dot-online' : 'dot-offline'" />
+              {{ device.enabled ? '启用' : '停用' }}
+            </span>
+            <span class="prod-pill" :class="device.access_sync_status === 'synced' ? 'pill-synced' : 'pill-pending'">
+              <span class="pill-dot" :class="device.access_sync_status === 'synced' ? 'dot-online' : 'dot-pending'" />
+              {{ syncLabel(device) }}
+            </span>
+            <span class="prod-pill" :class="runtimeState(device) === 'online' ? 'pill-runtime-on' : runtimeState(device) === 'offline' ? 'pill-runtime-off' : 'pill-muted'">
+              <span class="pill-dot" :class="runtimeState(device) === 'online' ? 'dot-online' : 'dot-offline'" />
+              {{ runtimeLabel(device) }}
+            </span>
+          </div>
+          <div class="prod-card-actions">
+            <button class="prod-act" type="button" title="查看详情" aria-label="查看详情" @click="openDetail(device)"><Eye :size="18" /></button>
+            <button class="prod-act" type="button" title="编辑" aria-label="编辑" @click="openEdit(device)"><Edit3 :size="18" /></button>
+            <button class="prod-act" type="button" :disabled="busy[device.id] === 'toggle'" :title="device.enabled ? '停用' : '启用'" :aria-label="device.enabled ? '停用' : '启用'" @click="toggleEnabled(device)">
+              <Pause v-if="device.enabled" :size="18" /><Play v-else :size="18" />
+            </button>
+            <button class="prod-act danger" type="button" :disabled="busy[device.id] === 'delete'" title="删除" aria-label="删除" @click="removeDevice(device)"><Trash2 :size="18" /></button>
           </div>
         </div>
       </div>
@@ -832,6 +869,16 @@ onMounted(() => {
 .prod-error p { margin: 3px 0 0; color: #b06565; font-size: 12.5px; }
 .prod-error .prod-button { margin-left: auto; color: #a14444; border-color: #e9c1c1; }
 .prod-form .prod-error { margin-top: 14px; }
+/* ---------- mobile card list ---------- */
+.prod-card-list { display: flex; flex-direction: column; gap: 12px; }
+.prod-card-item { display: flex; flex-direction: column; gap: 8px; padding: 16px; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.prod-card-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.prod-card-name { font-size: 15px; font-weight: 600; color: #1C1C1E; }
+.prod-card-sub { font-size: 12px; color: #8E8E93; }
+.prod-card-id { font-size: 12px; color: #3A3A3C; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prod-card-status { display: flex; flex-wrap: wrap; gap: 6px; }
+.prod-card-actions { display: flex; gap: 6px; margin-top: 2px; }
+.prod-card-actions .prod-act { width: 44px; height: 44px; }
 /* ---------- empty ---------- */
 .prod-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 16px; padding: 52px 20px; text-align: center; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
 .prod-empty-icon { display: inline-flex; align-items: center; justify-content: center; width: 52px; height: 52px; margin-bottom: 6px; color: #8E8E93; background: #F2F2F7; border-radius: 999px; }
@@ -929,8 +976,11 @@ onMounted(() => {
   .prod-table-card { overflow-x: auto; }
   .prod-thead, .prod-trow { min-width: 960px; }
 }
-@media (max-width: 560px) {
+@media (max-width: 640px) {
   .prod-head-inner { flex-direction: column; align-items: stretch; }
   .prod-head .prod-button-primary { align-self: flex-start; }
-}
+  /* 移动端：操作按钮常显 + 触控目标 ≥44px */
+  .prod-act { opacity: 1 !important; width: 44px; height: 44px; }
+  .prod-actions { opacity: 1; }
+}  /* ← end of 640px block */
 </style>

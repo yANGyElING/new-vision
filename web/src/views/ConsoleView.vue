@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   Activity, AlertTriangle, Check, CircleHelp, Clock3, Database, KeyRound, ListPlus,
-  LogOut, Pause, Play, Plus, RefreshCw, Server, Trash2, WifiOff, X, Zap,
+  LogOut, Monitor, Pause, Play, Plus, RefreshCw, Server, Trash2, WifiOff, X, Zap,
 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import { fetchHealth, type CheckState, type HealthState } from '@/api/health'
@@ -355,6 +355,9 @@ onUnmounted(() => activeHealthController?.abort())
     </header>
 
     <section class="content console-content">
+      <div class="mobile-hint" role="note">
+        <Monitor :size="14" />建议在 PC 端使用测试控制台获得完整功能
+      </div>
       <div class="eyebrow">自治节点 · 测试控制台</div>
       <div class="heading-row">
         <div>

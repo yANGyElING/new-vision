@@ -752,8 +752,11 @@ onUnmounted(() => {
   .prod-table-card { overflow-x: auto; }
   .prod-thead, .prod-trow { min-width: 640px; }
 }
-@media (max-width: 560px) {
+@media (max-width: 640px) {
   .prod-head-inner { flex-direction: column; align-items: stretch; }
   .prod-head .prod-button-primary { align-self: flex-start; }
+  /* 移动端：操作按钮常显 + 触控目标 ≥44px */
+  .prod-act { opacity: 1 !important; width: 44px; height: 44px; }
+  .prod-actions { opacity: 1; }
 }
 </style>

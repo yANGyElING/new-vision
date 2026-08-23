@@ -1,0 +1,17 @@
+{
+  "name": "new-vision 节点管理",
+  "short_name": "new-vision",
+  "description": "new-vision 节点接入管理平台",
+  "start_url": "/devices",
+  "display": "standalone",
+  "background_color": "#F2F2F7",
+  "theme_color": "#1C1C1E",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
