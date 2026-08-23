@@ -237,9 +237,21 @@ onBeforeUnmount(() => {
   width: min(408px, 100%);
   padding: 34px 34px 26px;
   text-align: center;
-  background: #fff;
+  /* fallback：不支持 backdrop-filter 时接近实底，保证可读性 */
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.38);
   border-radius: 22px;
-  box-shadow: 0 30px 80px -16px rgba(4, 9, 18, 0.6), 0 4px 18px rgba(4, 9, 18, 0.28);
+  box-shadow:
+    0 30px 80px -16px rgba(4, 9, 18, 0.6),
+    0 4px 18px rgba(4, 9, 18, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .login-card {
+    background: rgba(255, 255, 255, 0.96);
+  }
 }
 .login-mark {
   display: inline-flex;
@@ -462,6 +474,76 @@ onBeforeUnmount(() => {
   }
   .login-submit {
     transition: none;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .login-shell {
+    background: #070b11;
+  }
+  .login-card {
+    background: rgba(24, 28, 34, 0.72);
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow:
+      0 30px 80px -16px rgba(0, 0, 0, 0.7),
+      0 4px 18px rgba(0, 0, 0, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  }
+  .login-mark {
+    color: #eef1f5;
+    background: linear-gradient(135deg, #3a4654, #232c37);
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+  .login-title {
+    color: #eef1f5;
+  }
+  .login-sub {
+    color: #aab3bd;
+  }
+  .login-field label {
+    color: #c2cad3;
+  }
+  .login-field input {
+    color: #eef1f5;
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.18);
+  }
+  .login-field input::placeholder {
+    color: #7d8791;
+  }
+  .login-field input:hover {
+    border-color: rgba(255, 255, 255, 0.28);
+  }
+  .login-field input:focus {
+    outline: none;
+    border-color: #eef1f5;
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.12);
+  }
+  .login-field input:-webkit-autofill {
+    -webkit-box-shadow: 0 0 0 40px #1c232c inset;
+    -webkit-text-fill-color: #eef1f5;
+  }
+  .login-eye {
+    color: #7d8791;
+  }
+  .login-eye:hover {
+    color: #d5dbe2;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .login-error {
+    color: #ffb3b3;
+    background: rgba(255, 69, 58, 0.12);
+    border-color: rgba(255, 69, 58, 0.35);
+  }
+  .login-submit {
+    color: #0d1218;
+    background: #eef1f5;
+  }
+  .login-submit:hover:not(:disabled) {
+    background: #ffffff;
+  }
+  .login-help {
+    color: #8b95a0;
   }
 }
 

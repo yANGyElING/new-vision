@@ -80,10 +80,6 @@ const flatRegions = computed<FlatRegion[]>(() => {
   return out
 })
 
-function regionPath(id: string): string {
-  return flatRegions.value.find((f) => f.region.id === id)?.path ?? id
-}
-
 async function loadRegions() {
   try {
     regionTree.value = await listRegions()
@@ -486,17 +482,17 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <main class="cg-main">
-      <!-- page head -->
-      <div class="cg-head">
-        <div class="cg-head-copy">
-          <h1>用户管理</h1>
-          <p>管理用户账号、角色分配与数据范围，基于 Casbin 域内 RBAC 实时生效。</p>
-        </div>
-        <button v-if="nodeAdmin" class="cg-btn-primary" type="button" @click="openUserCreate">
+    <!-- glass sticky title bar -->
+    <header class="ios-head">
+      <div class="ios-head-inner">
+        <h1>用户管理</h1>
+        <button v-if="nodeAdmin" class="ios-btn-primary" type="button" @click="openUserCreate">
           <UserPlus :size="16" :stroke-width="2.2" />新增用户
         </button>
       </div>
+    </header>
+
+    <main class="ios-main">
 
       <Transition name="toast">
         <div v-if="flash" class="cg-toast" role="status">
@@ -505,177 +501,154 @@ onUnmounted(() => {
       </Transition>
 
       <!-- access denied -->
-      <div v-if="accessDenied" class="cg-empty denied" role="alert">
-        <span class="cg-empty-icon"><ShieldCheck :size="26" /></span>
+      <div v-if="accessDenied" class="ios-empty denied" role="alert">
+        <span class="ios-empty-icon"><ShieldCheck :size="26" /></span>
         <strong>需要节点管理员权限</strong>
         <p>用户管理仅对 node_admin 角色开放，请联系管理员调整你的角色。</p>
-        <RouterLink class="cg-btn-quiet" to="/devices">前往设备管理</RouterLink>
+        <RouterLink class="ios-btn-quiet" to="/devices">前往设备管理</RouterLink>
       </div>
 
       <template v-else>
-        <!-- metrics strip -->
-        <div class="cg-stats" aria-label="用户数据统计">
-          <div class="cg-stat">
-            <span class="cg-stat-label"><Users :size="14" />用户总数</span>
-            <strong class="cg-stat-value">{{ stats.total }}</strong>
+        <!-- stats cards -->
+        <div class="ios-stats" aria-label="用户数据统计">
+          <div class="ios-stat">
+            <span class="ios-stat-label"><Users :size="18" :stroke-width="2" />用户总数</span>
+            <strong class="ios-stat-value">{{ stats.total }}</strong>
           </div>
-          <div class="cg-stat">
-            <span class="cg-stat-label"><span class="cg-dot on" />启用中</span>
-            <strong class="cg-stat-value">{{ stats.active }}</strong>
+          <div class="ios-stat">
+            <span class="ios-stat-label"><span class="ios-dot green" />启用中</span>
+            <strong class="ios-stat-value">{{ stats.active }}</strong>
           </div>
-          <div class="cg-stat">
-            <span class="cg-stat-label"><span class="cg-dot off" />已停用</span>
-            <strong class="cg-stat-value">{{ stats.disabled }}</strong>
+          <div class="ios-stat">
+            <span class="ios-stat-label"><span class="ios-dot red" />已停用</span>
+            <strong class="ios-stat-value">{{ stats.disabled }}</strong>
           </div>
-          <div class="cg-stat">
-            <span class="cg-stat-label"><ShieldCheck :size="14" />管理员</span>
-            <strong class="cg-stat-value">{{ stats.admins }}</strong>
+          <div class="ios-stat">
+            <span class="ios-stat-label"><ShieldCheck :size="18" :stroke-width="2" />管理员</span>
+            <strong class="ios-stat-value">{{ stats.admins }}</strong>
           </div>
         </div>
 
-        <!-- toolbar -->
-        <div class="cg-toolbar">
-          <div class="cg-search">
-            <Search :size="15" class="cg-search-icon" />
-            <input v-model="userSearch" placeholder="搜索用户名、显示名或角色" @input="resetUserPage" aria-label="搜索用户" />
-            <button v-if="userSearch" class="cg-search-clear" type="button" aria-label="清空搜索" @click="userSearch = ''; resetUserPage()"><X :size="13" /></button>
+        <!-- search & filter card -->
+        <div class="ios-toolbar-card">
+          <div class="ios-search">
+            <Search :size="16" :stroke-width="2.5" class="ios-search-icon" />
+            <input v-model="userSearch" placeholder="搜索用户名、显示名或角色..." @input="resetUserPage" aria-label="搜索用户" />
+            <button v-if="userSearch" class="ios-search-clear" type="button" aria-label="清空搜索" @click="userSearch = ''; resetUserPage()"><X :size="13" /></button>
           </div>
-          <select v-model="tenantFilter" class="cg-select" aria-label="按租户筛选" @change="resetUserPage(); loadUsers()">
+          <select v-model="tenantFilter" class="ios-select" aria-label="按租户筛选" @change="resetUserPage(); loadUsers()">
             <option value="">本租户</option>
             <option v-for="t in tenants" :key="t.id" :value="t.id">{{ t.name }}</option>
           </select>
-          <select v-model="statusFilter" class="cg-select" aria-label="按状态筛选" @change="resetUserPage">
-            <option value="">全部状态</option>
-            <option value="active">启用</option>
-            <option value="disabled">停用</option>
-          </select>
-          <button class="cg-icon-btn cg-refresh" type="button" :disabled="usersLoading" aria-label="刷新用户列表" title="刷新" @click="loadUsers">
+          <div class="ios-pills" role="group" aria-label="按状态筛选">
+            <button class="ios-pill" :class="{ active: statusFilter === '' }" type="button" @click="statusFilter = ''; resetUserPage()">全部</button>
+            <button class="ios-pill" :class="{ active: statusFilter === 'active' }" type="button" @click="statusFilter = 'active'; resetUserPage()">启用中</button>
+            <button class="ios-pill" :class="{ active: statusFilter === 'disabled' }" type="button" @click="statusFilter = 'disabled'; resetUserPage()">已停用</button>
+          </div>
+          <button class="ios-refresh" type="button" :disabled="usersLoading" aria-label="刷新用户列表" title="刷新" @click="loadUsers">
             <RefreshCw :size="16" :class="{ spinning: usersLoading }" />
           </button>
         </div>
 
         <!-- error -->
-        <div v-if="usersError" class="cg-alert" role="alert">
+        <div v-if="usersError" class="ios-alert" role="alert">
           <AlertTriangle :size="18" />
           <div>
             <strong>加载失败</strong>
             <p>{{ usersError }}</p>
           </div>
-          <button class="cg-btn-quiet" type="button" @click="loadUsers">重试</button>
+          <button class="ios-btn-quiet" type="button" @click="loadUsers">重试</button>
         </div>
 
         <!-- loading -->
-        <div v-else-if="usersLoading" class="cg-card cg-table-wrap" aria-label="加载中">
-          <table class="cg-table">
-            <thead>
-              <tr>
-                <th scope="col">用户</th><th scope="col">租户</th><th scope="col">角色</th>
-                <th scope="col">区域范围</th><th scope="col">状态</th><th scope="col">创建时间</th>
-                <th scope="col" class="col-actions">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="n in 6" :key="n" class="skeleton-row">
-                <td><span class="sk sk-name" /></td>
-                <td><span class="sk sk-pill" /></td>
-                <td><span class="sk sk-pill" /></td>
-                <td><span class="sk sk-pill" /></td>
-                <td><span class="sk sk-pill" /></td>
-                <td><span class="sk sk-id" /></td>
-                <td><span class="sk sk-actions" /></td>
-              </tr>
-            </tbody>
-          </table>
+        <div v-else-if="usersLoading" class="ios-card ios-table-card" aria-label="加载中">
+          <div class="ios-thead" role="row">
+            <div role="columnheader">用户</div>
+            <div role="columnheader">租户</div>
+            <div role="columnheader">角色</div>
+            <div role="columnheader">状态</div>
+            <div role="columnheader">创建时间</div>
+            <div role="columnheader" class="th-actions">操作</div>
+          </div>
+          <div v-for="n in 6" :key="n" class="ios-trow sk-row" role="row">
+            <div role="cell"><span class="sk sk-name" /></div>
+            <div role="cell"><span class="sk sk-pill" /></div>
+            <div role="cell"><span class="sk sk-pill" /></div>
+            <div role="cell"><span class="sk sk-pill" /></div>
+            <div role="cell"><span class="sk sk-id" /></div>
+            <div role="cell"><span class="sk sk-actions" /></div>
+          </div>
         </div>
 
         <!-- table -->
-        <div v-else-if="filteredUsers.length > 0" class="cg-card cg-table-wrap">
-          <table class="cg-table">
-            <thead>
-              <tr>
-                <th scope="col">用户</th><th scope="col">租户</th><th scope="col">角色</th>
-                <th scope="col">区域范围</th><th scope="col">状态</th><th scope="col">创建时间</th>
-                <th scope="col" class="col-actions">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="user in pageUsers" :key="user.id" class="cg-row">
-                <td class="cg-name-cell">
-                  <div class="cg-name">{{ user.username }}<span v-if="user.id === currentUser?.id" class="cg-self-badge">本人</span></div>
-                  <div class="cg-name-sub">{{ user.display_name || '未设置显示名' }}</div>
-                </td>
-                <td class="cg-tenant-cell">
-                  <span class="cg-tenant-inline"><Building2 :size="13" class="cg-tenant-icon" />{{ tenantNameByID.get(user.tenant_id) ?? user.tenant_id }}</span>
-                </td>
-                <td>
-                  <div class="cg-role-pills">
-                    <span v-for="role in user.roles" :key="role" class="cg-pill" :class="`pill-role-${role}`" :title="roleHint(role)">
-                      {{ roleLabel(role) }}
-                    </span>
-                    <span v-if="user.roles.length === 0" class="cg-pill pill-none">无角色</span>
-                  </div>
-                </td>
-                <td>
-                  <span v-if="user.region_ids.length > 0" class="cg-scope" :title="user.region_ids.map(regionPath).join('\n')">
-                    {{ user.region_ids.length }} 个区域
-                  </span>
-                  <span v-else class="cg-scope-none">未分配</span>
-                </td>
-                <td>
-                  <span class="cg-status">
-                    <span class="cg-dot" :class="user.status === 'active' ? 'on' : 'off'" />
-                    {{ user.status === 'active' ? '启用' : '停用' }}
-                  </span>
-                </td>
-                <td class="mono cg-time">{{ formatDate(user.created_at) }}</td>
-                <td class="col-actions">
-                  <div class="cg-actions">
-                    <button class="cg-act" type="button" title="编辑用户" aria-label="编辑用户" @click="openUserEdit(user)"><Edit3 :size="15" /></button>
-                    <button class="cg-act" type="button" title="重置密码" aria-label="重置密码" @click="openPasswordModal(user)"><KeyRound :size="15" /></button>
-                    <button class="cg-act" type="button" :disabled="userBusy[user.id] === 'status' || user.id === currentUser?.id" :title="user.status === 'active' ? '停用' : '启用'" :aria-label="user.status === 'active' ? '停用' : '启用'" @click="toggleUserStatus(user)">
-                      <Pause v-if="user.status === 'active'" :size="15" /><Play v-else :size="15" />
-                    </button>
-                    <button
-                      class="cg-act danger" type="button"
-                      :disabled="userBusy[user.id] === 'delete' || user.id === currentUser?.id"
-                      :title="user.id === currentUser?.id ? '不能删除自己的账号' : '删除'"
-                      :aria-label="user.id === currentUser?.id ? '不能删除自己的账号' : '删除'"
-                      @click="removeUser(user)"
-                    ><Trash2 :size="15" /></button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <div v-else-if="filteredUsers.length > 0" class="ios-card ios-table-card">
+          <div class="ios-thead" role="row">
+            <div role="columnheader">用户</div>
+            <div role="columnheader">租户</div>
+            <div role="columnheader">角色</div>
+            <div role="columnheader">状态</div>
+            <div role="columnheader">创建时间</div>
+            <div role="columnheader" class="th-actions">操作</div>
+          </div>
+          <div v-for="user in pageUsers" :key="user.id" class="ios-trow" role="row">
+            <div role="cell" class="ios-user-cell">
+              <div class="ios-user">
+                <span class="ios-avatar" aria-hidden="true">{{ user.username.charAt(0).toUpperCase() }}</span>
+                <div class="ios-user-text">
+                  <div class="ios-user-name">{{ user.username }}<span v-if="user.id === currentUser?.id" class="ios-self">本人</span></div>
+                  <div class="ios-user-sub">{{ user.display_name || '未设置显示名' }}</div>
+                </div>
+              </div>
+            </div>
+            <div role="cell" class="ios-tenant-cell">
+              <span class="ios-tenant"><Building2 :size="14" :stroke-width="2" />{{ tenantNameByID.get(user.tenant_id) ?? user.tenant_id }}</span>
+            </div>
+            <div role="cell">
+              <span v-for="role in user.roles" :key="role" class="ios-role" :class="`role-${role}`" :title="roleHint(role)">{{ roleLabel(role) }}</span>
+              <span v-if="user.roles.length === 0" class="ios-role role-none">无角色</span>
+            </div>
+            <div role="cell">
+              <span class="ios-status">
+                <span class="ios-dot" :class="user.status === 'active' ? 'green' : 'gray'" />
+                {{ user.status === 'active' ? '启用' : '停用' }}
+              </span>
+            </div>
+            <div role="cell" class="ios-time mono">{{ formatDate(user.created_at) }}</div>
+            <div role="cell" class="td-actions">
+              <div class="ios-actions">
+                <button class="ios-act" type="button" title="编辑用户" aria-label="编辑用户" @click="openUserEdit(user)"><Edit3 :size="15" /></button>
+                <button class="ios-act" type="button" title="重置密码" aria-label="重置密码" @click="openPasswordModal(user)"><KeyRound :size="15" /></button>
+                <button class="ios-act" type="button" :disabled="userBusy[user.id] === 'status' || user.id === currentUser?.id" :title="user.status === 'active' ? '停用' : '启用'" :aria-label="user.status === 'active' ? '停用' : '启用'" @click="toggleUserStatus(user)">
+                  <Pause v-if="user.status === 'active'" :size="15" /><Play v-else :size="15" />
+                </button>
+                <button class="ios-act danger" type="button" :disabled="userBusy[user.id] === 'delete' || user.id === currentUser?.id" :title="user.id === currentUser?.id ? '不能删除自己的账号' : '删除'" :aria-label="user.id === currentUser?.id ? '不能删除自己的账号' : '删除'" @click="removeUser(user)"><Trash2 :size="15" /></button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- empty -->
-        <div v-else class="cg-empty" role="status">
-          <span class="cg-empty-icon"><Search v-if="filterActive" :size="26" /><Users v-else :size="26" /></span>
+        <div v-else class="ios-empty" role="status">
+          <span class="ios-empty-icon"><Search v-if="filterActive" :size="26" /><Users v-else :size="26" /></span>
           <strong>{{ filterActive ? '没有符合条件的用户' : '还没有用户' }}</strong>
           <p>{{ filterActive ? '试试调整搜索词或筛选条件。' : '点击「新增用户」创建第一个账号。' }}</p>
-          <button v-if="!filterActive" class="cg-btn-primary" type="button" @click="openUserCreate">
+          <button v-if="!filterActive" class="ios-btn-primary" type="button" @click="openUserCreate">
             <UserPlus :size="15" />新增用户
           </button>
-          <button v-else class="cg-btn-quiet" type="button" @click="clearFilters">清除筛选</button>
+          <button v-else class="ios-btn-quiet" type="button" @click="clearFilters">清除筛选</button>
         </div>
 
         <!-- pagination -->
-        <div v-if="filteredUsers.length > userPageSize" class="cg-pagination">
-          <span class="cg-page-count mono">{{ (userPage - 1) * userPageSize + 1 }}-{{ Math.min(userPage * userPageSize, filteredUsers.length) }} / {{ filteredUsers.length }}</span>
-          <div class="cg-page-btns">
-            <button class="cg-icon-btn" type="button" :disabled="userPage <= 1" aria-label="上一页" @click="userPage--"><ChevronLeft :size="15" /></button>
-            <span class="cg-page-info mono">{{ userPage }} / {{ userTotalPages }}</span>
-            <button class="cg-icon-btn" type="button" :disabled="userPage >= userTotalPages" aria-label="下一页" @click="userPage++"><ChevronRight :size="15" /></button>
+        <div v-if="filteredUsers.length > userPageSize" class="ios-pagination">
+          <span class="ios-page-count mono">{{ (userPage - 1) * userPageSize + 1 }}-{{ Math.min(userPage * userPageSize, filteredUsers.length) }} / {{ filteredUsers.length }}</span>
+          <div class="ios-page-btns">
+            <button class="ios-page-btn" type="button" :disabled="userPage <= 1" aria-label="上一页" @click="userPage--"><ChevronLeft :size="15" /></button>
+            <span class="ios-page-info mono">{{ userPage }} / {{ userTotalPages }}</span>
+            <button class="ios-page-btn" type="button" :disabled="userPage >= userTotalPages" aria-label="下一页" @click="userPage++"><ChevronRight :size="15" /></button>
           </div>
         </div>
       </template>
     </main>
-
-    <footer class="cg-footer">
-      <span>new-vision 节点管理系统</span>
-      <span class="cg-footer-deps"><ShieldCheck :size="13" />Casbin RBAC · 角色变更实时生效</span>
-    </footer>
 
     <!-- ============ user create / edit modal (Notion style) ============ -->
     <Teleport to="body">
@@ -854,7 +827,7 @@ onUnmounted(() => {
 
 <style scoped>
 /* =============== shared chrome (topbar / footer) =============== */
-.page-shell { min-height: 100vh; background: #f7f8fa; color: #10151b; font-family: 'DM Sans', 'Noto Sans SC', system-ui, sans-serif; }
+.page-shell { min-height: 100vh; background: #F2F2F7; color: #1C1C1E; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
 .page-topbar { display: flex; align-items: center; gap: 30px; padding: 0 32px; height: 62px; background: #11161c; color: #e8ebee; border-bottom: 1px solid #1f2730; position: sticky; top: 0; z-index: 30; }
 .page-brand { display: flex; align-items: center; gap: 11px; }
 .page-logo { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; color: #fff; background: linear-gradient(135deg, #2d3742, #1c242d); border: 1px solid #333f4b; border-radius: 10px; }
@@ -874,121 +847,127 @@ onUnmounted(() => {
 .health-down .page-health-dot { background: #f87171; box-shadow: 0 0 0 3px rgba(248,113,113,.15); }
 
 /* =============== layout =============== */
-.cg-main { max-width: 1120px; margin: 0 auto; padding: 40px 32px 64px; }
-.cg-footer { max-width: 1120px; margin: 0 auto; padding: 20px 32px 32px; display: flex; align-items: center; justify-content: space-between; color: #9aa3ad; font-size: 12px; }
-.cg-footer-deps { display: inline-flex; align-items: center; gap: 6px; }
+.ios-main { max-width: 1200px; margin: 0 auto; padding: 0 32px 64px; }
 
-/* =============== page head =============== */
-.cg-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
-.cg-head h1 { margin: 0; font-size: 25px; font-weight: 700; letter-spacing: -.015em; color: #10151b; }
-.cg-head p { margin: 8px 0 0; color: #5d6772; font-size: 13.5px; }
+/* =============== glass sticky title bar =============== */
+.ios-head { position: sticky; top: 62px; z-index: 10; background: rgba(255,255,255,0.85); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(0,0,0,0.05); }
+.ios-head-inner { max-width: 1200px; margin: 0 auto; padding: 20px 32px; display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+.ios-head h1 { margin: 0; font-size: 28px; font-weight: 700; color: #1C1C1E; letter-spacing: -0.8px; }
 
 /* =============== buttons =============== */
-.cg-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 40px; padding: 0 18px; color: #fff; background: #0f141a; border: 0; border-radius: 999px; font-size: 13.5px; font-weight: 700; letter-spacing: .01em; text-decoration: none; cursor: pointer; transition: background .18s, box-shadow .18s, transform .08s; }
-.cg-btn-primary:hover:not(:disabled) { background: #262d36; box-shadow: 0 8px 22px -8px rgba(10,15,22,.5); }
-.cg-btn-primary:active:not(:disabled) { transform: scale(.985); }
-.cg-btn-primary:disabled { cursor: wait; opacity: .8; }
-.cg-btn-quiet { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 38px; padding: 0 16px; color: #454f5b; background: transparent; border: 0; border-radius: 999px; font-size: 13.5px; font-weight: 600; text-decoration: none; cursor: pointer; transition: color .15s, background .15s; }
-.cg-btn-quiet:hover { color: #10151b; background: #f2f4f6; }
-.cg-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; color: #5d6772; background: transparent; border: 0; border-radius: 10px; cursor: pointer; transition: color .15s, background .15s; }
-.cg-icon-btn:hover:not(:disabled) { color: #10151b; background: #f2f4f6; }
-.cg-icon-btn:disabled { cursor: not-allowed; opacity: .45; }
-.cg-icon-btn:focus-visible { outline: 2px solid #10151b; outline-offset: 1px; }
+.ios-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 20px; color: #fff; background: #1C1C1E; border: 0; border-radius: 999px; font-size: 14px; font-weight: 600; letter-spacing: -0.2px; text-decoration: none; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.12); transition: background .15s, box-shadow .15s, transform .08s; }
+.ios-btn-primary:hover:not(:disabled) { background: #2c2c2e; box-shadow: 0 4px 14px rgba(0,0,0,0.18); }
+.ios-btn-primary:active:not(:disabled) { transform: scale(.985); }
+.ios-btn-primary:disabled { cursor: wait; opacity: .7; }
+.ios-btn-primary:focus-visible { outline: 2px solid #007AFF; outline-offset: 2px; }
+.ios-btn-quiet { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 38px; padding: 0 16px; color: #3A3A3C; background: transparent; border: 0; border-radius: 999px; font-size: 13.5px; font-weight: 600; text-decoration: none; cursor: pointer; transition: color .15s, background .15s; }
+.ios-btn-quiet:hover { color: #1C1C1E; background: #F2F2F7; }
 
 /* =============== toast =============== */
-.cg-toast { position: fixed; top: 78px; left: 50%; transform: translateX(-50%); z-index: 60; display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; color: #fff; background: #0f141a; border-radius: 999px; font-size: 13px; font-weight: 600; box-shadow: 0 12px 32px -8px rgba(4,9,18,.45); }
+.cg-toast { position: fixed; top: 78px; left: 50%; transform: translateX(-50%); z-index: 60; display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; color: #fff; background: #1C1C1E; border-radius: 999px; font-size: 13px; font-weight: 600; box-shadow: 0 12px 32px -8px rgba(0,0,0,.35); }
 .cg-toast svg { color: #6ee7b7; }
 .toast-enter-active, .toast-leave-active { transition: opacity .22s, transform .22s; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translate(-50%, -8px); }
 
-/* =============== stats strip =============== */
-.cg-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 28px; background: #fff; border: 1px solid #eceef1; border-radius: 16px; box-shadow: 0 1px 2px rgba(16,24,40,.04); overflow: hidden; }
-.cg-stat { display: flex; flex-direction: column; gap: 9px; padding: 18px 22px; }
-.cg-stat + .cg-stat { border-left: 1px solid #f0f2f4; }
-.cg-stat-label { display: inline-flex; align-items: center; gap: 7px; color: #8b939d; font-size: 12px; font-weight: 600; }
-.cg-stat-value { font-size: 25px; font-weight: 700; letter-spacing: -.02em; color: #10151b; font-variant-numeric: tabular-nums; line-height: 1; }
-.cg-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.cg-dot.on { background: #10b981; }
-.cg-dot.off { background: #c3cad2; }
+/* =============== stats cards =============== */
+.ios-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+.ios-stat { display: flex; flex-direction: column; gap: 12px; padding: 20px 24px; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.ios-stat-label { display: inline-flex; align-items: center; gap: 8px; color: #8E8E93; font-size: 13px; font-weight: 500; }
+.ios-stat-value { font-size: 32px; font-weight: 700; letter-spacing: -1px; line-height: 1; color: #1C1C1E; font-variant-numeric: tabular-nums; }
+.ios-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ios-dot.green { background: #34C759; box-shadow: 0 0 0 3px rgba(52,199,89,0.15); }
+.ios-dot.red { background: #FF3B30; }
+.ios-dot.gray { background: #C7C7CC; }
 
-/* =============== toolbar =============== */
-.cg-toolbar { display: flex; gap: 10px; margin-top: 22px; align-items: center; }
-.cg-search { position: relative; flex: 1; max-width: 360px; display: flex; align-items: center; height: 40px; padding: 0 38px 0 14px; background: #f2f4f6; border: 1px solid transparent; border-radius: 999px; transition: background .16s, border-color .16s, box-shadow .16s; }
-.cg-search:focus-within { background: #fff; border-color: #c6ccd4; box-shadow: 0 0 0 4px rgba(16,21,27,.07); }
-.cg-search-icon { color: #8b939d; pointer-events: none; margin-right: 8px; }
-.cg-search input { flex: 1; min-width: 0; height: 100%; font: inherit; font-size: 13.5px; color: #10151b; background: none; border: 0; outline: none; }
-.cg-search input::placeholder { color: #9aa3ad; }
-.cg-search-clear { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; color: #8b939d; background: none; border: 0; border-radius: 999px; cursor: pointer; }
-.cg-search-clear:hover { color: #10151b; background: #eceff2; }
-.cg-select { height: 40px; padding: 0 34px 0 14px; font: inherit; font-size: 13px; font-weight: 500; color: #10151b; background: #fff; border: 1px solid #e3e6ea; border-radius: 999px; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
-.cg-select:hover { border-color: #c6ccd4; }
-.cg-select:focus-visible { outline: none; border-color: #10151b; box-shadow: 0 0 0 4px rgba(16,21,27,.07); }
-.cg-refresh { margin-left: auto; }
+/* =============== search & filter card =============== */
+.ios-toolbar-card { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; padding: 16px 20px; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.ios-search { position: relative; flex: 1; min-width: 240px; }
+.ios-search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #C7C7CC; pointer-events: none; }
+.ios-search input { width: 100%; padding: 10px 14px 10px 40px; border: 1.5px solid #E5E5EA; border-radius: 12px; font-size: 15px; color: #1C1C1E; background: #FAFAFA; outline: none; box-sizing: border-box; letter-spacing: -0.2px; font-family: inherit; transition: border-color .15s, background .15s, box-shadow .15s; }
+.ios-search input::placeholder { color: #C7C7CC; }
+.ios-search input:focus { border-color: #c7c7cc; background: #fff; box-shadow: 0 0 0 3px rgba(0,122,255,.12); }
+.ios-search-clear { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; color: #8E8E93; background: none; border: 0; border-radius: 999px; cursor: pointer; }
+.ios-search-clear:hover { color: #1C1C1E; background: #F2F2F7; }
+.ios-select { height: 40px; padding: 0 34px 0 14px; font: inherit; font-size: 13px; font-weight: 500; color: #3A3A3C; background: #fff; border: 1.5px solid #E5E5EA; border-radius: 12px; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.ios-select:hover { border-color: #c7c7cc; }
+.ios-select:focus-visible { outline: none; border-color: #007AFF; box-shadow: 0 0 0 3px rgba(0,122,255,.15); }
+.ios-pills { display: flex; align-items: center; gap: 6px; }
+.ios-pill { padding: 8px 16px; border: 1px solid #E5E5EA; border-radius: 999px; font-size: 13px; font-weight: 500; letter-spacing: -0.2px; color: #636366; background: #F2F2F7; cursor: pointer; font-family: inherit; transition: background .15s, color .15s, border-color .15s; }
+.ios-pill:hover { border-color: #c7c7cc; }
+.ios-pill.active { background: #1C1C1E; color: #fff; border-color: #1C1C1E; font-weight: 600; }
+.ios-pill:focus-visible { outline: 2px solid #007AFF; outline-offset: 2px; }
+.ios-refresh { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0; color: #636366; background: #fff; border: 1.5px solid #E5E5EA; border-radius: 10px; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
+.ios-refresh:hover:not(:disabled) { background: #F2F2F7; border-color: #c7c7cc; }
+.ios-refresh:disabled { cursor: wait; opacity: .5; }
+.ios-refresh:focus-visible { outline: 2px solid #007AFF; outline-offset: 2px; }
 
 /* =============== table =============== */
-.cg-card { background: #fff; border: 1px solid #eceef1; border-radius: 16px; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
-.cg-table-wrap { margin-top: 16px; overflow: hidden; }
-.cg-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.cg-table th { padding: 13px 18px; text-align: left; color: #8b939d; font-size: 12px; font-weight: 600; letter-spacing: .02em; border-bottom: 1px solid #eceef1; white-space: nowrap; }
-.cg-table td { padding: 15px 18px; border-bottom: 1px solid #f2f4f5; vertical-align: middle; }
-.cg-table tr:last-child td { border-bottom: 0; }
-.cg-row { transition: background .12s; }
-.cg-row:hover { background: #f8f9fb; }
-.cg-name-cell { min-width: 150px; }
-.cg-name { display: flex; align-items: center; gap: 7px; font-weight: 600; color: #10151b; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cg-self-badge { flex-shrink: 0; padding: 1px 8px; color: #1d4ed8; background: #e8effd; border-radius: 999px; font-size: 10.5px; font-weight: 700; }
-.cg-name-sub { margin-top: 3px; color: #9aa3ad; font-size: 11.5px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cg-tenant-cell { color: #454f5b; }
-.cg-tenant-inline { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.cg-tenant-icon { color: #9aa3ad; flex-shrink: 0; }
-.cg-time { color: #8b939d; font-size: 12px; white-space: nowrap; }
-.cg-role-pills { display: flex; flex-wrap: wrap; gap: 5px; max-width: 240px; }
-.cg-pill { display: inline-flex; align-items: center; padding: 3.5px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
-.pill-role-node_admin { color: #6d28d9; background: #f1eafd; }
-.pill-role-tenant_admin { color: #1d4ed8; background: #e8effd; }
-.pill-role-operator { color: #92400e; background: #fdf0e0; }
-.pill-role-viewer { color: #4b5563; background: #f0f2f4; }
-.pill-none { color: #9aa3ad; background: #f2f4f6; }
-.cg-scope { color: #454f5b; font-size: 12.5px; cursor: help; }
-.cg-scope-none { color: #b3bac2; font-size: 12.5px; }
-.cg-status { display: inline-flex; align-items: center; gap: 7px; color: #454f5b; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
-.cg-table .col-actions { text-align: right; }
-.cg-actions { display: inline-flex; gap: 2px; opacity: .5; transition: opacity .15s; }
-.cg-row:hover .cg-actions, .cg-actions:focus-within { opacity: 1; }
-.cg-act { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: #5d6772; background: transparent; border: 0; border-radius: 9px; cursor: pointer; transition: color .15s, background .15s; }
-.cg-act:hover:not(:disabled) { color: #10151b; background: #f2f4f6; }
-.cg-act.danger:hover:not(:disabled) { color: #b44444; background: #fdf3f3; }
-.cg-act:disabled { cursor: not-allowed; opacity: .4; }
-.cg-act:focus-visible { outline: 2px solid #10151b; outline-offset: 1px; }
+.ios-card { background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.ios-table-card { margin-bottom: 16px; overflow: hidden; }
+.ios-thead, .ios-trow { display: grid; grid-template-columns: 2.5fr 1fr 1.5fr 1fr 1.5fr 100px; align-items: center; }
+.ios-thead { padding: 14px 24px; background: #FAFAFA; border-bottom: 1px solid #F2F2F7; font-size: 12px; font-weight: 600; color: #8E8E93; text-transform: uppercase; letter-spacing: 0.5px; }
+.ios-thead .th-actions { text-align: right; }
+.ios-trow { padding: 16px 24px; border-bottom: 1px solid #F2F2F7; background: #fff; transition: background 0.15s; }
+.ios-trow:last-child { border-bottom: 0; }
+.ios-trow:hover { background: #FAFAFA; }
+.ios-user-cell { min-width: 0; }
+.ios-user { display: flex; align-items: center; gap: 12px; }
+.ios-avatar { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; font-size: 15px; font-weight: 600; }
+.ios-user-text { min-width: 0; }
+.ios-user-name { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: #1C1C1E; letter-spacing: -0.3px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ios-self { flex-shrink: 0; padding: 2px 8px; color: #007AFF; background: #E5F0FF; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.ios-user-sub { margin-top: 3px; font-size: 13px; color: #8E8E93; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ios-tenant-cell { min-width: 0; }
+.ios-tenant { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; color: #3A3A3C; white-space: nowrap; }
+.ios-tenant svg { color: #C7C7CC; flex-shrink: 0; }
+.ios-role { display: inline-block; padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: -0.2px; white-space: nowrap; }
+.role-node_admin { color: #7C3AED; background: #F3E8FF; }
+.role-tenant_admin { color: #1d4ed8; background: #E8EFFD; }
+.role-operator { color: #92400e; background: #FDF0E0; }
+.role-viewer { color: #4b5563; background: #F0F2F4; }
+.role-none { color: #C7C7CC; background: #F2F2F7; }
+.ios-status { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; color: #1C1C1E; white-space: nowrap; }
+.ios-time { font-size: 14px; color: #3A3A3C; white-space: nowrap; }
+.td-actions { text-align: right; }
+.ios-actions { display: inline-flex; gap: 4px; opacity: 0; transition: opacity .15s; }
+.ios-trow:hover .ios-actions, .ios-actions:focus-within { opacity: 1; }
+.ios-act { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: #8E8E93; background: transparent; border: 0; border-radius: 8px; cursor: pointer; transition: all 0.15s; }
+.ios-act:hover:not(:disabled) { background: #F2F2F7; color: #1C1C1E; }
+.ios-act.danger:hover:not(:disabled) { background: #FFF2F2; color: #FF3B30; }
+.ios-act:disabled { cursor: not-allowed; opacity: .4; }
+.ios-act:focus-visible { outline: 2px solid #007AFF; outline-offset: 1px; }
 
 /* =============== skeleton =============== */
-.skeleton-row td { padding: 16px 18px; }
-.sk { display: inline-block; background: linear-gradient(90deg, #f0f2f4 25%, #f7f8f9 37%, #f0f2f4 63%); background-size: 400% 100%; animation: sk-shimmer 1.3s ease infinite; border-radius: 6px; }
-.sk-name { width: 120px; height: 13px; }
-.sk-id { width: 150px; height: 12px; }
-.sk-pill { width: 56px; height: 18px; border-radius: 999px; }
-.sk-actions { width: 128px; height: 28px; }
+.sk-row { padding: 16px 24px; }
+.sk { display: inline-block; background: linear-gradient(90deg, #F2F2F7 25%, #FAFAFA 37%, #F2F2F7 63%); background-size: 400% 100%; animation: sk-shimmer 1.3s ease infinite; border-radius: 6px; }
+.sk-name { width: 140px; height: 14px; }
+.sk-id { width: 120px; height: 12px; }
+.sk-pill { width: 64px; height: 20px; border-radius: 999px; }
+.sk-actions { width: 132px; height: 28px; }
 @keyframes sk-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 
 /* =============== alerts / empty =============== */
-.cg-alert { display: flex; align-items: center; gap: 13px; margin-top: 16px; padding: 15px 18px; color: #a14444; background: #fdf2f2; border: 1px solid #f2d6d6; border-radius: 14px; }
-.cg-alert svg { flex-shrink: 0; }
-.cg-alert strong { font-size: 13.5px; }
-.cg-alert p { margin: 3px 0 0; color: #b06565; font-size: 12.5px; }
-.cg-alert .cg-btn-quiet { margin-left: auto; color: #a14444; }
-.cg-alert .cg-btn-quiet:hover { color: #7c3535; background: #fbe7e7; }
-.cg-alert.slim { display: block; margin: 0; padding: 10px 13px; font-size: 13px; font-weight: 600; }
-.cg-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 16px; padding: 56px 20px; text-align: center; background: #fff; border: 1px solid #eceef1; border-radius: 16px; }
-.cg-empty-icon { display: inline-flex; align-items: center; justify-content: center; width: 54px; height: 54px; margin-bottom: 6px; color: #8b939d; background: #f4f6f8; border-radius: 999px; }
-.cg-empty strong { font-size: 14.5px; color: #10151b; }
-.cg-empty p { margin: 0 0 12px; color: #8b939d; font-size: 13px; }
-.cg-empty.denied { margin-top: 28px; }
+.ios-alert { display: flex; align-items: center; gap: 13px; margin-bottom: 16px; padding: 15px 18px; color: #a14444; background: #fdf2f2; border: 1px solid #f2d6d6; border-radius: 16px; }
+.ios-alert svg { flex-shrink: 0; }
+.ios-alert strong { font-size: 13.5px; }
+.ios-alert p { margin: 3px 0 0; color: #b06565; font-size: 12.5px; }
+.ios-alert .ios-btn-quiet { margin-left: auto; color: #a14444; }
+.ios-alert .ios-btn-quiet:hover { color: #7c3535; background: #fbe7e7; }
+.ios-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 16px; padding: 56px 20px; text-align: center; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.ios-empty-icon { display: inline-flex; align-items: center; justify-content: center; width: 54px; height: 54px; margin-bottom: 6px; color: #8E8E93; background: #F2F2F7; border-radius: 999px; }
+.ios-empty strong { font-size: 14.5px; color: #1C1C1E; }
+.ios-empty p { margin: 0 0 12px; color: #8E8E93; font-size: 13px; }
+.ios-empty.denied { margin-top: 28px; }
 
 /* =============== pagination =============== */
-.cg-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
-.cg-page-count { color: #8b939d; font-size: 12px; }
-.cg-page-btns { display: flex; align-items: center; gap: 8px; }
-.cg-page-info { color: #5d6772; font-size: 12px; }
+.ios-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding: 0 4px; }
+.ios-page-count { color: #8E8E93; font-size: 12px; }
+.ios-page-btns { display: flex; align-items: center; gap: 8px; }
+.ios-page-info { color: #3A3A3C; font-size: 12px; }
+.ios-page-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: #8E8E93; background: #fff; border: 1px solid #E5E5EA; border-radius: 8px; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
+.ios-page-btn:hover:not(:disabled) { background: #F2F2F7; color: #1C1C1E; }
+.ios-page-btn:disabled { cursor: not-allowed; opacity: .45; }
+.ios-page-btn:focus-visible { outline: 2px solid #007AFF; outline-offset: 1px; }
 
 /* =============== overlay =============== */
 .cg-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(15,15,15,.45); backdrop-filter: blur(3px); }
@@ -1074,7 +1053,7 @@ onUnmounted(() => {
 /* =============== reduced motion =============== */
 @media (prefers-reduced-motion: reduce) {
   .sk, .spinning { animation: none; }
-  .cg-row, .cg-btn-primary, .cg-act, .cg-icon-btn, .cg-btn-quiet, .page-nav-link, .cg-search, .cg-select, .nt-input, .nt-combo, .nt-multi, .nt-x, .nt-ib, .nt-btn { transition: none; }
+  .ios-trow, .ios-btn-primary, .ios-act, .ios-refresh, .ios-pill, .ios-btn-quiet, .page-nav-link, .ios-search input, .ios-select, .nt-input, .nt-combo, .nt-multi, .nt-x, .nt-ib, .nt-btn { transition: none; }
   .modal-enter-active, .modal-leave-active, .toast-enter-active, .toast-leave-active, .ntpop-enter-active, .ntpop-leave-active { transition: none; }
   .modal-enter-from, .modal-leave-to, .toast-enter-from, .toast-leave-to, .ntpop-enter-from, .ntpop-leave-to { opacity: 1; transform: none; }
   .toast-enter-from, .toast-leave-to { transform: translate(-50%, 0); }
@@ -1084,23 +1063,22 @@ onUnmounted(() => {
 @media (max-width: 900px) {
   .page-topbar { gap: 14px; padding: 0 16px; }
   .page-brand-text span { display: none; }
-  .cg-main { padding: 28px 16px 48px; }
-  .cg-head { flex-direction: column; align-items: stretch; }
-  .cg-head .cg-btn-primary { align-self: flex-start; }
-  .cg-stats { grid-template-columns: 1fr 1fr; }
-  .cg-stat + .cg-stat { border-left: 0; }
-  .cg-stat:nth-child(even) { border-left: 1px solid #f0f2f4; }
-  .cg-stat:nth-child(n+3) { border-top: 1px solid #f0f2f4; }
-  .cg-toolbar { flex-wrap: wrap; }
-  .cg-search { max-width: none; flex-basis: 100%; }
-  .cg-refresh { margin-left: 0; }
-  .cg-card.cg-table-wrap { overflow-x: auto; }
-  .cg-table { min-width: 860px; }
+  .ios-main { padding: 0 16px 48px; }
+  .ios-head-inner { padding: 16px 16px; }
+  .ios-head { top: 62px; }
+  .ios-stats { grid-template-columns: 1fr 1fr; }
+  .ios-toolbar-card { gap: 12px; }
+  .ios-search { flex-basis: 100%; }
+  .ios-refresh { margin-left: 0; }
+  .ios-table-card { overflow-x: auto; }
+  .ios-thead, .ios-trow { min-width: 860px; }
   .nt-form { padding: 16px 20px 20px; }
   .nt-modal-head { padding: 20px 20px 0; }
   .nt-modal { border-radius: 8px; }
 }
 @media (max-width: 560px) {
+  .ios-head-inner { flex-direction: column; align-items: stretch; }
+  .ios-head .ios-btn-primary { align-self: flex-start; }
   .nt-row { flex-direction: column; gap: 6px; }
   .nt-label { flex-basis: auto; padding-top: 0; }
 }

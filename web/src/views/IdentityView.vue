@@ -308,17 +308,17 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <main class="prod-main">
-      <div class="prod-page-head">
-        <div class="prod-heading">
-          <span class="prod-eyebrow">ORGANIZATION / TENANTS &amp; REGIONS</span>
-          <h1>组织架构</h1>
-          <p>管理租户与区域层级；区域决定用户可见的设备数据范围，在「用户管理」中分配。</p>
-        </div>
+    <!-- glass sticky title bar -->
+    <header class="prod-head">
+      <div class="prod-head-inner">
+        <h1>组织架构</h1>
         <button v-if="nodeAdmin" class="prod-button prod-button-primary" type="button" @click="headAction.run()">
           <component :is="headAction.icon" :size="16" :stroke-width="2.2" />{{ headAction.label }}
         </button>
       </div>
+    </header>
+
+    <main class="prod-main">
 
       <Transition name="toast">
         <div v-if="flash" class="prod-flash" role="status">
@@ -335,22 +335,22 @@ onUnmounted(() => {
       </div>
 
       <template v-else>
-        <!-- metrics -->
+        <!-- stats cards -->
         <div class="prod-stats" aria-label="组织数据统计">
           <div class="prod-stat">
-            <span class="prod-stat-label"><Building2 :size="14" />租户总数</span>
+            <span class="prod-stat-label"><Building2 :size="18" :stroke-width="2" />租户总数</span>
             <strong class="prod-stat-value">{{ stats.tenants }}</strong>
           </div>
           <div class="prod-stat">
             <span class="prod-stat-label"><span class="stat-dot dot-online" />启用租户</span>
-            <strong class="prod-stat-value stat-online">{{ stats.active }}</strong>
+            <strong class="prod-stat-value">{{ stats.active }}</strong>
           </div>
           <div class="prod-stat">
             <span class="prod-stat-label"><span class="stat-dot dot-offline" />停用租户</span>
-            <strong class="prod-stat-value stat-offline">{{ stats.disabled }}</strong>
+            <strong class="prod-stat-value">{{ stats.disabled }}</strong>
           </div>
           <div class="prod-stat">
-            <span class="prod-stat-label"><Network :size="14" />区域节点</span>
+            <span class="prod-stat-label"><Network :size="18" :stroke-width="2" />区域节点</span>
             <strong class="prod-stat-value">{{ stats.regions }}</strong>
           </div>
         </div>
@@ -366,9 +366,9 @@ onUnmounted(() => {
 
         <!-- ============ tenants tab ============ -->
         <section v-if="tab === 'tenants'" aria-label="租户管理">
-          <div class="prod-toolbar">
-            <div class="prod-toolbar-hint">租户是权限的顶层隔离域；停用租户后其下用户将无法登录。</div>
-            <button class="prod-icon prod-refresh" type="button" :disabled="tenantsLoading" aria-label="刷新租户列表" title="刷新" @click="loadTenants">
+          <div class="prod-toolbar-card">
+            <span class="prod-toolbar-hint">租户是权限的顶层隔离域；停用租户后其下用户将无法登录。</span>
+            <button class="prod-refresh" type="button" :disabled="tenantsLoading" aria-label="刷新租户列表" title="刷新" @click="loadTenants">
               <RefreshCw :size="16" :class="{ spinning: tenantsLoading }" />
             </button>
           </div>
@@ -382,56 +382,56 @@ onUnmounted(() => {
             <button class="prod-button" type="button" @click="loadTenants"><RefreshCw :size="14" />重试</button>
           </div>
 
-          <div v-else-if="tenantsLoading" class="prod-table-wrap" aria-label="加载中">
-            <table class="prod-table">
-              <thead>
-                <tr><th scope="col">租户</th><th scope="col">状态</th><th scope="col">创建时间</th><th scope="col" class="col-actions">操作</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="n in 4" :key="n" class="skeleton-row">
-                  <td><span class="sk sk-name" /></td><td><span class="sk sk-pill" /></td>
-                  <td><span class="sk sk-id" /></td><td><span class="sk sk-actions" /></td>
-                </tr>
-              </tbody>
-            </table>
+          <div v-else-if="tenantsLoading" class="prod-table-card" aria-label="加载中">
+            <div class="prod-thead" role="row">
+              <div role="columnheader">租户</div>
+              <div role="columnheader">状态</div>
+              <div role="columnheader">创建时间</div>
+              <div role="columnheader" class="th-actions">操作</div>
+            </div>
+            <div v-for="n in 4" :key="n" class="prod-trow sk-row" role="row">
+              <div role="cell"><span class="sk sk-name" /></div>
+              <div role="cell"><span class="sk sk-pill" /></div>
+              <div role="cell"><span class="sk sk-id" /></div>
+              <div role="cell"><span class="sk sk-actions" /></div>
+            </div>
           </div>
 
-          <div v-else-if="tenants.length > 0" class="prod-table-wrap">
-            <table class="prod-table">
-              <thead>
-                <tr><th scope="col">租户</th><th scope="col">状态</th><th scope="col">创建时间</th><th scope="col" class="col-actions">操作</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="tenant in tenants" :key="tenant.id" class="prod-row">
-                  <td class="prod-name-cell">
-                    <div class="prod-name prod-tenant-name">
-                      <Building2 :size="14" class="prod-tenant-icon" />{{ tenant.name }}
-                    </div>
-                    <div class="prod-name-sub mono">{{ tenant.id }}</div>
-                  </td>
-                  <td>
-                    <span class="prod-pill" :class="tenant.status === 'active' ? 'pill-enable' : 'pill-muted'">
-                      <span class="pill-dot" :class="tenant.status === 'active' ? 'dot-online' : 'dot-offline'" />
-                      {{ tenant.status === 'active' ? '启用' : '停用' }}
-                    </span>
-                  </td>
-                  <td class="mono prod-time">{{ formatDate(tenant.created_at) }}</td>
-                  <td class="col-actions">
-                    <div class="prod-actions">
-                      <button
-                        class="prod-icon" type="button"
-                        :disabled="tenantBusy[tenant.id]"
-                        :title="tenant.status === 'active' ? '停用租户' : '启用租户'"
-                        :aria-label="tenant.status === 'active' ? '停用租户' : '启用租户'"
-                        @click="toggleTenant(tenant)"
-                      >
-                        <Pause v-if="tenant.status === 'active'" :size="15" /><Play v-else :size="15" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          <div v-else-if="tenants.length > 0" class="prod-table-card">
+            <div class="prod-thead" role="row">
+              <div role="columnheader">租户</div>
+              <div role="columnheader">状态</div>
+              <div role="columnheader">创建时间</div>
+              <div role="columnheader" class="th-actions">操作</div>
+            </div>
+            <div v-for="tenant in tenants" :key="tenant.id" class="prod-trow" role="row">
+              <div role="cell" class="prod-name-cell">
+                <div class="prod-name prod-tenant-name">
+                  <Building2 :size="14" class="prod-tenant-icon" />{{ tenant.name }}
+                </div>
+                <div class="prod-name-sub mono">{{ tenant.id }}</div>
+              </div>
+              <div role="cell">
+                <span class="prod-pill" :class="tenant.status === 'active' ? 'pill-enable' : 'pill-muted'">
+                  <span class="pill-dot" :class="tenant.status === 'active' ? 'dot-online' : 'dot-offline'" />
+                  {{ tenant.status === 'active' ? '启用' : '停用' }}
+                </span>
+              </div>
+              <div role="cell" class="prod-time mono">{{ formatDate(tenant.created_at) }}</div>
+              <div role="cell" class="td-actions">
+                <div class="prod-actions">
+                  <button
+                    class="prod-act" type="button"
+                    :disabled="tenantBusy[tenant.id]"
+                    :title="tenant.status === 'active' ? '停用租户' : '启用租户'"
+                    :aria-label="tenant.status === 'active' ? '停用租户' : '启用租户'"
+                    @click="toggleTenant(tenant)"
+                  >
+                    <Pause v-if="tenant.status === 'active'" :size="15" /><Play v-else :size="15" />
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div v-else class="prod-empty" role="status">
@@ -444,9 +444,9 @@ onUnmounted(() => {
 
         <!-- ============ regions tab ============ -->
         <section v-else aria-label="区域管理">
-          <div class="prod-toolbar">
-            <div class="prod-toolbar-hint">区域是树形数据范围；给用户分配父区域即可覆盖其整个子树。</div>
-            <button class="prod-icon prod-refresh" type="button" :disabled="regionsLoading" aria-label="刷新区域列表" title="刷新" @click="loadRegions">
+          <div class="prod-toolbar-card">
+            <span class="prod-toolbar-hint">区域是树形数据范围；给用户分配父区域即可覆盖其整个子树。</span>
+            <button class="prod-refresh" type="button" :disabled="regionsLoading" aria-label="刷新区域列表" title="刷新" @click="loadRegions">
               <RefreshCw :size="16" :class="{ spinning: regionsLoading }" />
             </button>
           </div>
@@ -460,44 +460,42 @@ onUnmounted(() => {
             <button class="prod-button" type="button" @click="loadRegions"><RefreshCw :size="14" />重试</button>
           </div>
 
-          <div v-else-if="regionsLoading" class="prod-table-wrap" aria-label="加载中">
-            <table class="prod-table">
-              <thead>
-                <tr><th scope="col">区域</th><th scope="col">创建时间</th><th scope="col" class="col-actions">操作</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="n in 5" :key="n" class="skeleton-row">
-                  <td><span class="sk sk-name" /></td><td><span class="sk sk-id" /></td><td><span class="sk sk-actions" /></td>
-                </tr>
-              </tbody>
-            </table>
+          <div v-else-if="regionsLoading" class="prod-table-card" aria-label="加载中">
+            <div class="prod-thead" role="row">
+              <div role="columnheader">区域</div>
+              <div role="columnheader">创建时间</div>
+              <div role="columnheader" class="th-actions">操作</div>
+            </div>
+            <div v-for="n in 5" :key="n" class="prod-trow sk-row" role="row">
+              <div role="cell"><span class="sk sk-name" /></div>
+              <div role="cell"><span class="sk sk-id" /></div>
+              <div role="cell"><span class="sk sk-actions" /></div>
+            </div>
           </div>
 
-          <div v-else-if="flatRegions.length > 0" class="prod-table-wrap">
-            <table class="prod-table">
-              <thead>
-                <tr><th scope="col">区域</th><th scope="col">创建时间</th><th scope="col" class="col-actions">操作</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="flat in flatRegions" :key="flat.region.id" class="prod-row">
-                  <td>
-                    <div class="prod-region-cell" :style="{ paddingLeft: `${flat.depth * 22 + 2}px` }">
-                      <Network :size="14" class="prod-region-icon" />
-                      <span class="prod-region-name">{{ flat.region.name }}</span>
-                      <span class="prod-region-path">{{ flat.path }}</span>
-                    </div>
-                  </td>
-                  <td class="mono prod-time">{{ formatDate(flat.region.created_at) }}</td>
-                  <td class="col-actions">
-                    <div class="prod-actions">
-                      <button class="prod-icon" type="button" title="添加子区域" aria-label="添加子区域" @click="openRegionModal(flat.region.id)"><Plus :size="15" /></button>
-                      <button class="prod-icon" type="button" title="重命名" aria-label="重命名" @click="openRenameRegion(flat)"><Edit3 :size="15" /></button>
-                      <button class="prod-icon danger" type="button" :disabled="regionBusy[flat.region.id]" title="删除" aria-label="删除" @click="removeRegion(flat)"><Trash2 :size="15" /></button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          <div v-else-if="flatRegions.length > 0" class="prod-table-card">
+            <div class="prod-thead" role="row">
+              <div role="columnheader">区域</div>
+              <div role="columnheader">创建时间</div>
+              <div role="columnheader" class="th-actions">操作</div>
+            </div>
+            <div v-for="flat in flatRegions" :key="flat.region.id" class="prod-trow" role="row">
+              <div role="cell">
+                <div class="prod-region-cell" :style="{ paddingLeft: `${flat.depth * 22 + 2}px` }">
+                  <Network :size="14" class="prod-region-icon" />
+                  <span class="prod-region-name">{{ flat.region.name }}</span>
+                  <span class="prod-region-path">{{ flat.path }}</span>
+                </div>
+              </div>
+              <div role="cell" class="prod-time mono">{{ formatDate(flat.region.created_at) }}</div>
+              <div role="cell" class="td-actions">
+                <div class="prod-actions">
+                  <button class="prod-act" type="button" title="添加子区域" aria-label="添加子区域" @click="openRegionModal(flat.region.id)"><Plus :size="15" /></button>
+                  <button class="prod-act" type="button" title="重命名" aria-label="重命名" @click="openRenameRegion(flat)"><Edit3 :size="15" /></button>
+                  <button class="prod-act danger" type="button" :disabled="regionBusy[flat.region.id]" title="删除" aria-label="删除" @click="removeRegion(flat)"><Trash2 :size="15" /></button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div v-else class="prod-empty" role="status">
@@ -509,11 +507,6 @@ onUnmounted(() => {
         </section>
       </template>
     </main>
-
-    <footer class="prod-footer">
-      <span>new-vision 节点管理系统</span>
-      <span class="prod-footer-deps"><ShieldCheck :size="13" />Casbin RBAC · 角色变更实时生效</span>
-    </footer>
 
     <!-- ============ tenant create modal ============ -->
     <Teleport to="body">
@@ -602,7 +595,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.prod-shell { min-height: 100vh; background: #f3f4f6; color: #1a1f26; font-family: 'DM Sans', 'Noto Sans SC', system-ui, sans-serif; }
+.prod-shell { min-height: 100vh; background: #F2F2F7; color: #1C1C1E; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
 /* ---------- topbar ---------- */
 .prod-topbar { display: flex; align-items: center; gap: 30px; padding: 0 32px; height: 62px; background: #11161c; color: #e8ebee; border-bottom: 1px solid #1f2730; position: sticky; top: 0; z-index: 30; }
 .prod-brand { display: flex; align-items: center; gap: 11px; }
@@ -621,96 +614,108 @@ onUnmounted(() => {
 .health-warn .prod-health-dot { background: #fbbf24; box-shadow: 0 0 0 3px rgba(251,191,36,.15); }
 .health-down .prod-health-dot { background: #f87171; box-shadow: 0 0 0 3px rgba(248,113,113,.15); }
 /* ---------- main ---------- */
-.prod-main { max-width: 1240px; margin: 0 auto; padding: 34px 32px 64px; }
-.prod-page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
-.prod-heading .prod-eyebrow { display: inline-flex; align-items: center; gap: 8px; color: #8a939d; font-size: 11px; font-weight: 700; letter-spacing: .12em; }
-.prod-heading h1 { margin: 7px 0 0; font-size: 24px; letter-spacing: -.01em; }
-.prod-heading p { margin: 7px 0 0; color: #6b7683; font-size: 13.5px; }
+.prod-main { max-width: 1200px; margin: 0 auto; padding: 0 32px 64px; }
+
+/* ---------- glass sticky title bar ---------- */
+.prod-head { position: sticky; top: 62px; z-index: 10; background: rgba(255,255,255,0.85); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(0,0,0,0.05); }
+.prod-head-inner { max-width: 1200px; margin: 0 auto; padding: 20px 32px; display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+.prod-head h1 { margin: 0; font-size: 28px; font-weight: 700; color: #1C1C1E; letter-spacing: -0.8px; }
 /* ---------- toast ---------- */
 .prod-flash { display: inline-flex; align-items: center; gap: 8px; margin-top: 18px; padding: 10px 15px; color: #1d714e; background: #ecf7f1; border: 1px solid #c5e6d5; border-radius: 9px; font-size: 13px; font-weight: 600; box-shadow: 0 4px 14px rgba(29,113,78,.08); }
 .toast-enter-active, .toast-leave-active { transition: opacity .2s, transform .2s; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(-6px); }
 /* ---------- metrics ---------- */
-.prod-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }
-.prod-stat { display: flex; flex-direction: column; gap: 8px; padding: 16px 18px; background: #fff; border: 1px solid #e4e7eb; border-radius: 11px; }
-.prod-stat-label { display: inline-flex; align-items: center; gap: 7px; color: #6b7683; font-size: 12px; font-weight: 600; }
-.stat-dot { width: 7px; height: 7px; border-radius: 50%; }
-.dot-online { background: #10b981; }
-.dot-offline { background: #a6b0ba; }
-.prod-stat-value { font-size: 26px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1; }
-.stat-online { color: #0e9f6e; }
-.stat-offline { color: #7c8792; }
+.prod-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+.prod-stat { display: flex; flex-direction: column; gap: 12px; padding: 20px 24px; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.prod-stat-label { display: inline-flex; align-items: center; gap: 8px; color: #8E8E93; font-size: 13px; font-weight: 500; }
+.stat-dot { width: 8px; height: 8px; border-radius: 50%; }
+.dot-online { background: #34C759; box-shadow: 0 0 0 3px rgba(52,199,89,0.15); }
+.dot-offline { background: #C7C7CC; }
+.prod-stat-value { font-size: 32px; font-weight: 700; letter-spacing: -1px; line-height: 1; color: #1C1C1E; font-variant-numeric: tabular-nums; }
 /* ---------- tabs ---------- */
-.prod-tabs { display: inline-flex; gap: 4px; margin-top: 24px; padding: 4px; background: #fff; border: 1px solid #e4e7eb; border-radius: 10px; }
-.prod-tab { padding: 8px 18px; color: #5f6873; background: none; border: 0; border-radius: 7px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: color .15s, background .15s; }
-.prod-tab:hover { color: #1a1f26; background: #f3f5f7; }
-.prod-tab.active { color: #fff; background: #1a1f26; }
-.prod-tab:focus-visible { outline: 2px solid #1a1f26; outline-offset: 1px; }
-/* ---------- toolbar ---------- */
-.prod-toolbar { display: flex; gap: 10px; margin-top: 20px; align-items: center; }
-.prod-toolbar-hint { flex: 1; color: #8a939d; font-size: 12.5px; }
-.prod-refresh { margin-left: auto; }
-/* ---------- buttons & icons ---------- */
-.prod-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 16px; color: #1a1f26; background: #fff; border: 1px solid #d9dee4; border-radius: 9px; font-size: 13.5px; font-weight: 600; text-decoration: none; cursor: pointer; transition: border-color .15s, background .15s, transform .05s; }
-.prod-button:hover:not(:disabled) { border-color: #aeb7c1; }
-.prod-button:active:not(:disabled) { transform: translateY(1px); }
+.prod-tabs { display: inline-flex; gap: 6px; margin-bottom: 16px; padding: 4px; background: #F2F2F7; border-radius: 12px; }
+.prod-tab { padding: 8px 18px; color: #636366; background: none; border: 0; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: color .15s, background .15s; }
+.prod-tab:hover { color: #1C1C1E; background: #E5E5EA; }
+.prod-tab.active { color: #fff; background: #1C1C1E; }
+.prod-tab:focus-visible { outline: 2px solid #007AFF; outline-offset: 1px; }
+/* ---------- toolbar card ---------- */
+.prod-toolbar-card { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; padding: 16px 20px; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.prod-toolbar-hint { flex: 1; color: #8E8E93; font-size: 12.5px; }
+.prod-refresh { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0; color: #636366; background: #fff; border: 1.5px solid #E5E5EA; border-radius: 10px; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
+.prod-refresh:hover:not(:disabled) { background: #F2F2F7; border-color: #C7C7CC; }
+.prod-refresh:disabled { cursor: wait; opacity: .5; }
+.prod-refresh:focus-visible { outline: 2px solid #007AFF; outline-offset: 2px; }
+/* ---------- buttons ---------- */
+.prod-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 20px; color: #1C1C1E; background: #fff; border: 1px solid #E5E5EA; border-radius: 999px; font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer; transition: border-color .15s, background .15s, transform .05s; }
+.prod-button:hover:not(:disabled) { border-color: #C7C7CC; }
+.prod-button:active:not(:disabled) { transform: scale(.985); }
 .prod-button:disabled { cursor: wait; opacity: .6; }
-.prod-button-primary { color: #fff; background: #1a1f26; border-color: #1a1f26; }
-.prod-button-primary:hover:not(:disabled) { background: #2d3540; border-color: #2d3540; }
+.prod-button-primary { color: #fff; background: #1C1C1E; border-color: #1C1C1E; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+.prod-button-primary:hover:not(:disabled) { background: #2c2c2e; border-color: #2c2c2e; }
+.prod-button:focus-visible { outline: 2px solid #007AFF; outline-offset: 2px; }
 .prod-icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; color: #5f6873; background: #fff; border: 1px solid #d9dee4; border-radius: 9px; cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
 .prod-icon:hover:not(:disabled) { color: #1a1f26; border-color: #aeb7c1; }
 .prod-icon.danger:hover:not(:disabled) { color: #b44444; border-color: #e9c1c1; background: #fdf6f6; }
 .prod-icon:disabled { cursor: not-allowed; opacity: .45; }
 /* ---------- table ---------- */
-.prod-table-wrap { margin-top: 16px; overflow: hidden; background: #fff; border: 1px solid #e4e7eb; border-radius: 12px; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
-.prod-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.prod-table th { padding: 12px 16px; text-align: left; color: #8a939d; font-size: 11px; font-weight: 700; letter-spacing: .06em; border-bottom: 1px solid #e4e7eb; white-space: nowrap; background: #fafbfc; }
-.prod-table td { padding: 13px 16px; border-bottom: 1px solid #f0f2f4; vertical-align: middle; }
-.prod-table tr:last-child td { border-bottom: 0; }
-.prod-row { transition: background .12s; }
-.prod-row:hover { background: #f8fafb; }
-.prod-row:hover .prod-actions .prod-icon { border-color: #cdd4db; }
-.prod-name-cell { min-width: 150px; }
-.prod-name { font-weight: 600; color: #1a1f26; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prod-name-sub { margin-top: 3px; color: #9aa3ac; font-size: 11px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prod-time { color: #8a939d; font-size: 12px; white-space: nowrap; }
+.prod-table-card { margin-bottom: 16px; overflow: hidden; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.prod-thead, .prod-trow { display: grid; align-items: center; }
+.prod-trow { grid-template-columns: 2fr 1fr 1.5fr 100px; }
+.prod-thead { grid-template-columns: 2fr 1fr 1.5fr 100px; }
+.prod-thead { padding: 14px 24px; background: #FAFAFA; border-bottom: 1px solid #F2F2F7; font-size: 12px; font-weight: 600; color: #8E8E93; text-transform: uppercase; letter-spacing: 0.5px; }
+.prod-thead .th-actions { text-align: right; }
+.prod-trow { padding: 16px 24px; border-bottom: 1px solid #F2F2F7; background: #fff; transition: background 0.15s; }
+.prod-trow:last-child { border-bottom: 0; }
+.prod-trow:hover { background: #FAFAFA; }
+.prod-trow:first-of-type { border-top: 0; }
+.prod-name-cell { min-width: 0; }
+.prod-name { font-weight: 600; color: #1C1C1E; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prod-name-sub { margin-top: 3px; color: #8E8E93; font-size: 11px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prod-time { color: #8E8E93; font-size: 12px; white-space: nowrap; }
 .prod-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .pill-dot { width: 6px; height: 6px; border-radius: 50%; }
-.pill-enable { color: #1d714e; background: #e9f6ef; }
-.pill-muted { color: #65707b; background: #f0f2f4; }
-.prod-table .col-actions { text-align: right; }
-.prod-actions { display: inline-flex; gap: 5px; opacity: .55; transition: opacity .15s; }
-.prod-row:hover .prod-actions, .prod-actions:focus-within { opacity: 1; }
+.pill-enable { color: #1d714e; background: #E9F6EF; }
+.pill-muted { color: #65707b; background: #F0F2F4; }
+.dot-online { background: #34C759; }
+.dot-offline { background: #C7C7CC; }
+.td-actions { text-align: right; }
+.prod-actions { display: inline-flex; gap: 4px; opacity: 0; transition: opacity .15s; }
+.prod-trow:hover .prod-actions, .prod-actions:focus-within { opacity: 1; }
+.prod-act { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: #8E8E93; background: transparent; border: 0; border-radius: 8px; cursor: pointer; transition: all 0.15s; }
+.prod-act:hover:not(:disabled) { background: #F2F2F7; color: #1C1C1E; }
+.prod-act.danger:hover:not(:disabled) { background: #FFF2F2; color: #FF3B30; }
+.prod-act:disabled { cursor: not-allowed; opacity: .4; }
+.prod-act:focus-visible { outline: 2px solid #007AFF; outline-offset: 1px; }
 .prod-tenant-name { display: inline-flex; align-items: center; gap: 7px; }
-.prod-tenant-icon { color: #9aa3ac; flex-shrink: 0; }
+.prod-tenant-icon { color: #C7C7CC; flex-shrink: 0; }
 .prod-region-cell { display: flex; align-items: center; gap: 8px; min-width: 260px; }
-.prod-region-icon { color: #9aa3ac; flex-shrink: 0; }
-.prod-region-name { font-weight: 600; color: #1a1f26; white-space: nowrap; }
-.prod-region-path { color: #9aa3ac; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prod-region-icon { color: #C7C7CC; flex-shrink: 0; }
+.prod-region-name { font-weight: 600; color: #1C1C1E; white-space: nowrap; }
+.prod-region-path { color: #8E8E93; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* ---------- skeleton ---------- */
-.skeleton-row td { padding: 16px; }
-.sk { display: inline-block; background: linear-gradient(90deg, #eef0f2 25%, #f6f7f8 37%, #eef0f2 63%); background-size: 400% 100%; animation: sk-shimmer 1.3s ease infinite; border-radius: 6px; }
-.sk-name { width: 120px; height: 13px; }
+.sk-row { padding: 16px 24px; }
+.sk { display: inline-block; background: linear-gradient(90deg, #F2F2F7 25%, #FAFAFA 37%, #F2F2F7 63%); background-size: 400% 100%; animation: sk-shimmer 1.3s ease infinite; border-radius: 6px; }
+.sk-name { width: 120px; height: 14px; }
 .sk-id { width: 150px; height: 12px; }
-.sk-pill { width: 56px; height: 18px; border-radius: 999px; }
+.sk-pill { width: 56px; height: 20px; border-radius: 999px; }
 .sk-actions { width: 130px; height: 28px; }
 @keyframes sk-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 /* ---------- error ---------- */
-.prod-error { display: flex; align-items: center; gap: 13px; margin-top: 16px; padding: 15px 18px; color: #9a4646; background: #fdf3f3; border: 1px solid #f0d2d2; border-radius: 11px; }
+.prod-error { display: flex; align-items: center; gap: 13px; margin-bottom: 16px; padding: 15px 18px; color: #a14444; background: #fdf2f2; border: 1px solid #f2d6d6; border-radius: 16px; }
 .prod-error svg { flex-shrink: 0; }
 .prod-error strong { font-size: 13.5px; }
 .prod-error p { margin: 3px 0 0; color: #b06565; font-size: 12.5px; }
-.prod-error .prod-button { margin-left: auto; color: #9a4646; border-color: #e9c1c1; }
+.prod-error .prod-button { margin-left: auto; color: #a14444; border-color: #e9c1c1; }
 .prod-form .prod-error { margin-top: 14px; }
 /* ---------- empty ---------- */
-.prod-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 16px; padding: 52px 20px; text-align: center; background: #fff; border: 1px dashed #d4d9df; border-radius: 12px; }
-.prod-empty-icon { display: inline-flex; align-items: center; justify-content: center; width: 52px; height: 52px; margin-bottom: 6px; color: #9aa3ac; background: #f4f6f8; border-radius: 13px; }
-.prod-empty strong { font-size: 14.5px; }
-.prod-empty p { margin: 0 0 10px; color: #8a939d; font-size: 13px; }
+.prod-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 16px; padding: 52px 20px; text-align: center; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.prod-empty-icon { display: inline-flex; align-items: center; justify-content: center; width: 52px; height: 52px; margin-bottom: 6px; color: #8E8E93; background: #F2F2F7; border-radius: 999px; }
+.prod-empty strong { font-size: 14.5px; color: #1C1C1E; }
+.prod-empty p { margin: 0 0 10px; color: #8E8E93; font-size: 13px; }
 .prod-empty.denied { margin-top: 24px; }
 /* ---------- overlay / modal ---------- */
-.prod-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(13,18,24,.48); backdrop-filter: blur(2px); }
-.prod-modal { width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto; background: #fff; border-radius: 14px; box-shadow: 0 24px 64px rgba(13,18,24,.28); }
+.prod-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0,0,0,.4); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+.prod-modal { width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto; background: #fff; border-radius: 16px; box-shadow: 0 24px 64px rgba(0,0,0,.28); }
 .prod-modal-narrow { max-width: 480px; }
 .prod-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 19px 22px; border-bottom: 1px solid #eef0f3; position: sticky; top: 0; background: #fff; z-index: 2; }
 .prod-modal-head h2 { margin: 0; font-size: 16.5px; display: flex; align-items: center; gap: 10px; }
@@ -726,16 +731,13 @@ onUnmounted(() => {
 .modal-enter-active .prod-modal, .modal-leave-active .prod-modal { transition: transform .18s cubic-bezier(.2,.8,.3,1), opacity .18s; }
 .modal-enter-from, .modal-leave-to { opacity: 0; }
 .modal-enter-from .prod-modal, .modal-leave-to .prod-modal { transform: translateY(14px) scale(.98); opacity: 0; }
-/* ---------- footer ---------- */
-.prod-footer { max-width: 1240px; margin: 0 auto; padding: 20px 32px 32px; display: flex; align-items: center; justify-content: space-between; color: #9aa3ac; font-size: 12px; }
-.prod-footer-deps { display: inline-flex; align-items: center; gap: 6px; }
 .mono { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; font-variant-numeric: tabular-nums; }
 .spinning { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* ---------- reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {
   .sk, .spinning { animation: none; }
-  .prod-row, .prod-button, .prod-icon, .prod-nav-link, .prod-tab { transition: none; }
+  .prod-trow, .prod-button, .prod-act, .prod-icon, .prod-nav-link, .prod-tab, .prod-refresh, .prod-pill, .prod-field input { transition: none; }
   .modal-enter-active, .modal-leave-active, .toast-enter-active, .toast-leave-active { transition: none; }
   .modal-enter-from, .modal-leave-to, .toast-enter-from, .toast-leave-to { opacity: 1; transform: none; }
 }
@@ -743,11 +745,15 @@ onUnmounted(() => {
 @media (max-width: 900px) {
   .prod-topbar { gap: 14px; padding: 0 16px; }
   .prod-brand-text span { display: none; }
-  .prod-main { padding: 24px 16px 48px; }
-  .prod-stats { grid-template-columns: repeat(2, 1fr); gap: 10px; }
-  .prod-table-wrap { overflow-x: auto; }
-  .prod-table { min-width: 640px; }
-  .prod-page-head { flex-direction: column; align-items: stretch; }
-  .prod-page-head .prod-button { align-self: flex-start; }
+  .prod-main { padding: 0 16px 48px; }
+  .prod-head-inner { padding: 16px 16px; }
+  .prod-stats { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .prod-toolbar-card { gap: 12px; }
+  .prod-table-card { overflow-x: auto; }
+  .prod-thead, .prod-trow { min-width: 640px; }
+}
+@media (max-width: 560px) {
+  .prod-head-inner { flex-direction: column; align-items: stretch; }
+  .prod-head .prod-button-primary { align-self: flex-start; }
 }
 </style>
