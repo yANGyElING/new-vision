@@ -19,7 +19,7 @@ async function api(method, path, { token, body } = {}) {
   return { status: res.status, json }
 }
 
-const login = await api('POST', '/api/v1/auth/login', { body: { tenant: 'default', username: 'admin', password: ADMIN_PASSWORD } })
+const login = await api('POST', '/api/v1/auth/login', { body: { tenant: 'default', username: 'vision', password: ADMIN_PASSWORD } })
 if (login.status !== 200) { console.error('login failed', login.status); process.exit(1) }
 const token = login.json.token
 

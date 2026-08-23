@@ -165,7 +165,7 @@ func seedAdmin(ctx context.Context, store *identity.Store, hasher interface{ Has
 	}
 	_, err = store.Users.Create(ctx, identity.CreateUserInput{
 		TenantID:    tenant.ID,
-		Username:    "admin",
+		Username:    "vision",
 		Password:    password,
 		DisplayName: "Platform Admin",
 		Roles:       []string{identity.RoleNodeAdmin},

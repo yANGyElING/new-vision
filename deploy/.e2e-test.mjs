@@ -1,7 +1,7 @@
 // e2e verification of the deployed auth system.
-// usage: NV_E2E_BASE=http://host:8080 NV_E2E_ADMIN_PASSWORD=... [NV_E2E_ADMIN_USERNAME=admin] node deploy/.e2e-test.mjs
+// usage: NV_E2E_BASE=http://host:8080 NV_E2E_ADMIN_PASSWORD=... [NV_E2E_ADMIN_USERNAME=vision] node deploy/.e2e-test.mjs
 const BASE = process.env.NV_E2E_BASE ?? 'http://106.52.72.48:8080'
-const ADMIN_USERNAME = process.env.NV_E2E_ADMIN_USERNAME ?? 'admin'
+const ADMIN_USERNAME = process.env.NV_E2E_ADMIN_USERNAME ?? 'vision'
 const ADMIN_PASSWORD = process.env.NV_E2E_ADMIN_PASSWORD
 if (!ADMIN_PASSWORD) {
   console.error('set NV_E2E_ADMIN_PASSWORD (the seeded admin password from the server env file)')
