@@ -69,7 +69,7 @@ func New(ctx context.Context, cfg Config, version string, logger *slog.Logger) (
 		return nil, fmt.Errorf("initialize token manager: %w", err)
 	}
 	authnHandler := authn.NewHandler(store.Tenants, store.Users, tokens, auditWriter)
-	authzCache := authz.NewEnforcerCache(func(ctx context.Context, tenantID string) (map[string][]string, error) {
+	authzMiddleware := authz.NewMiddleware(tokens, func(ctx context.Context, tenantID string) (map[string][]string, error) {
 		users, err := store.Users.List(ctx, tenantID)
 		if err != nil {
 			return nil, err
@@ -79,20 +79,13 @@ func New(ctx context.Context, cfg Config, version string, logger *slog.Logger) (
 			userRoles[u.ID] = u.Roles
 		}
 		return userRoles, nil
-	})
-	authzMiddleware := authz.NewMiddleware(tokens, authzCache, anonymousRoutes)
+	}, anonymousRoutes)
 	identityHandler := identity.NewHandler(store, auditWriter, tokens.Hasher(), func(ctx context.Context) *identity.PrincipalInfo {
 		p := authn.PrincipalFrom(ctx)
 		if p == nil {
 			return nil
 		}
 		return &identity.PrincipalInfo{UserID: p.UserID, TenantID: p.TenantID}
-	}, func(tenantID string) {
-		// Role assignments changed: drop the cached enforcer. The next
-		// request rebuilds it from the authoritative user_roles table via
-		// the cache's role loader, so new roles take effect immediately
-		// without a restart.
-		authzCache.Invalidate(tenantID)
 	})
 
 	// Device / access / sync / siptest.
@@ -111,7 +104,7 @@ func New(ctx context.Context, cfg Config, version string, logger *slog.Logger) (
 	healthMux := newHandler(postgres.Ping, func(ctx context.Context) error {
 		return redisClient.Ping(ctx).Err()
 	}, cfg.HealthTimeout, metrics)
-	NewRoutes(healthMux, authnHandler, authzMiddleware, identityHandler, deviceManager, accessEP, siptestSim, store.Regions, store.Users, auditWriter)
+	NewRoutes(healthMux, authnHandler, authzMiddleware, identityHandler, deviceManager, accessEP, siptestSim, store.OrgUnits, store.Users, auditWriter)
 	app := &App{
 		Handler:  healthMux,
 		postgres: postgres,
@@ -119,16 +112,11 @@ func New(ctx context.Context, cfg Config, version string, logger *slog.Logger) (
 		cancel:   cancel,
 	}
 
-	// Seed the initial admin user first, then warm the authz cache: the
-	// enforcer must be built after the admin exists so its roles are
-	// included (the lazy loader covers later tenants either way).
+	// Seed the initial admin user. Roles are read live from the DB on every
+	// authorization, so no authz cache warm-up is needed.
 	if err := seedAdmin(ctx, store, tokens.Hasher(), cfg.SeedAdminPassword); err != nil {
 		app.Close()
 		return nil, fmt.Errorf("seed admin: %w", err)
-	}
-	if err := loadAuthzRoles(ctx, store, authzCache); err != nil {
-		app.Close()
-		return nil, fmt.Errorf("load authorization roles: %w", err)
 	}
 
 	go sync.NewSyncRunner(devices, accessClient, projection, cfg.AccessPollInterval).Run(ctx)
@@ -152,31 +140,10 @@ var anonymousRoutes = []string{
 	"/api/v1/auth/login",
 }
 
-// loadAuthzRoles populates the authz enforcer cache for all tenants.
-func loadAuthzRoles(ctx context.Context, store *identity.Store, cache *authz.EnforcerCache) error {
-	tenants, err := store.Tenants.List(ctx)
-	if err != nil {
-		return err
-	}
-	for _, tenant := range tenants {
-		users, err := store.Users.List(ctx, tenant.ID)
-		if err != nil {
-			return err
-		}
-		userRoles := make(map[string][]string, len(users))
-		for _, u := range users {
-			userRoles[u.ID] = u.Roles
-		}
-		if err := cache.Load(tenant.ID, userRoles); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // seedAdmin creates the initial node_admin user when the users table is empty
 // and NV_SEED_ADMIN_PASSWORD is configured. It belongs to the default tenant
-// (created by migration 000004) and the root region.
+// (created by migration 000004). No org scope is assigned: node_admin sees
+// everything via the authorization short-circuit.
 func seedAdmin(ctx context.Context, store *identity.Store, hasher interface{ Hash(string) (string, error) }, password string) error {
 	if password == "" {
 		return nil
@@ -196,17 +163,12 @@ func seedAdmin(ctx context.Context, store *identity.Store, hasher interface{ Has
 	if err != nil {
 		return err
 	}
-	rootRegion, err := store.Regions.Get(ctx, "00000000-0000-0000-0000-000000000002")
-	if err != nil {
-		return fmt.Errorf("root region missing: %w", err)
-	}
 	_, err = store.Users.Create(ctx, identity.CreateUserInput{
 		TenantID:    tenant.ID,
 		Username:    "admin",
 		Password:    password,
 		DisplayName: "Platform Admin",
 		Roles:       []string{identity.RoleNodeAdmin},
-		RegionIDs:   []string{rootRegion.ID},
 	}, hash)
 	if err != nil {
 		return err

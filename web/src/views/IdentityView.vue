@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
-  AlertTriangle, Building2, Check, Edit3, Monitor, Network, Pause, Play,
-  Plus, RefreshCw, ShieldCheck, Trash2, X,
+  AlertTriangle, Building2, Check, ChevronDown, Edit3, Monitor, Network, Pause, Play,
+  Plus, RefreshCw, ShieldCheck, Trash2, X, Move,
 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import { fetchHealth, type HealthState } from '@/api/health'
 import { me } from '@/api/auth'
 import {
-  createRegion, createTenant, deleteRegion, listRegions, listTenants,
-  renameRegion, setTenantStatus,
-  type Region, type Tenant,
+  createOrgUnit, createTenant, deleteOrgUnit, listOrgUnits, listTenants,
+  renameOrgUnit, moveOrgUnit, setTenantStatus,
+  type OrgUnit, type Tenant,
 } from '@/api/identity'
 
 // ---------- health band ----------
@@ -39,11 +39,11 @@ const nodeAdmin = ref(false)
 const accessDenied = ref(false)
 
 // ---------- tabs ----------
-type TabKey = 'tenants' | 'regions'
+type TabKey = 'tenants' | 'org-units'
 const tab = ref<TabKey>('tenants')
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'tenants', label: '租户' },
-  { key: 'regions', label: '区域' },
+  { key: 'org-units', label: '组织单元' },
 ]
 
 // ---------- flash ----------
@@ -70,7 +70,6 @@ async function loadTenants() {
   }
 }
 
-// tenant create modal
 const tenantModalOpen = ref(false)
 const tenantFormName = ref('')
 const tenantCreating = ref(false)
@@ -115,96 +114,95 @@ async function toggleTenant(tenant: Tenant) {
   }
 }
 
-// ---------- regions ----------
-const regionTree = ref<Region[]>([])
-const regionsLoading = ref(false)
-const regionsError = ref('')
+// ---------- org units ----------
+const orgTree = ref<OrgUnit[]>([])
+const orgsLoading = ref(false)
+const orgsError = ref('')
+const tenantFilter = ref('')
 
-type FlatRegion = { region: Region; depth: number; path: string }
+type FlatOrg = { org: OrgUnit; depth: number; path: string }
 
-const flatRegions = computed<FlatRegion[]>(() => {
-  const out: FlatRegion[] = []
-  const walk = (nodes: Region[], depth: number, prefix: string) => {
+const flatOrgTree = computed<FlatOrg[]>(() => {
+  const out: FlatOrg[] = []
+  const walk = (nodes: OrgUnit[], depth: number, prefix: string) => {
     for (const n of nodes) {
       const path = prefix ? `${prefix} / ${n.name}` : n.name
-      out.push({ region: n, depth, path })
+      out.push({ org: n, depth, path })
       if (n.children?.length) walk(n.children, depth + 1, path)
     }
   }
-  walk(regionTree.value, 0, '')
+  walk(orgTree.value, 0, '')
   return out
 })
 
-function regionPath(id: string): string {
-  return flatRegions.value.find((f) => f.region.id === id)?.path ?? id
+function orgPath(id: string): string {
+  return flatOrgTree.value.find((f) => f.org.id === id)?.path ?? id
 }
 
-async function loadRegions() {
-  regionsLoading.value = true
-  regionsError.value = ''
+async function loadOrgUnits() {
+  orgsLoading.value = true
+  orgsError.value = ''
   try {
-    regionTree.value = await listRegions()
+    orgTree.value = await listOrgUnits(tenantFilter.value || undefined)
   } catch (error) {
-    regionsError.value = error instanceof Error ? error.message : '加载区域列表失败'
+    orgsError.value = error instanceof Error ? error.message : '加载组织列表失败'
   } finally {
-    regionsLoading.value = false
+    orgsLoading.value = false
   }
 }
 
-// region create modal
-const regionModalOpen = ref(false)
-const regionParentID = ref('')
-const regionFormName = ref('')
-const regionCreating = ref(false)
-const regionError = ref('')
+const orgModalOpen = ref(false)
+const orgParentID = ref('')
+const orgFormName = ref('')
+const orgCreating = ref(false)
+const orgError = ref('')
 
-function openRegionModal(parentID = '') {
-  regionParentID.value = parentID
-  regionFormName.value = ''
-  regionError.value = ''
-  regionModalOpen.value = true
+function openOrgModal(parentID = '') {
+  orgParentID.value = parentID
+  orgFormName.value = ''
+  orgError.value = ''
+  orgModalOpen.value = true
 }
 
-async function submitRegion() {
-  const name = regionFormName.value.trim()
-  if (!name) { regionError.value = '请输入区域名称'; return }
-  regionCreating.value = true
-  regionError.value = ''
+async function submitOrg() {
+  const name = orgFormName.value.trim()
+  if (!name) { orgError.value = '请输入组织名称'; return }
+  orgCreating.value = true
+  orgError.value = ''
   try {
-    await createRegion(regionParentID.value, name)
-    regionModalOpen.value = false
-    flashMessage(`区域「${name}」已创建`)
-    await loadRegions()
+    await createOrgUnit(tenantFilter.value || undefined, orgParentID.value, name)
+    orgModalOpen.value = false
+    flashMessage(`组织「${name}」已创建`)
+    await loadOrgUnits()
   } catch (error) {
-    regionError.value = error instanceof Error ? error.message : '创建失败'
+    orgError.value = error instanceof Error ? error.message : '创建失败'
   } finally {
-    regionCreating.value = false
+    orgCreating.value = false
   }
 }
 
-// region rename modal
-const renamingRegion = ref<FlatRegion | null>(null)
+const renamingOrg = ref<FlatOrg | null>(null)
 const renameFormName = ref('')
 const renaming = ref(false)
 const renameError = ref('')
 
-function openRenameRegion(flat: FlatRegion) {
-  renamingRegion.value = flat
-  renameFormName.value = flat.region.name
+function openRenameOrg(flat: FlatOrg) {
+  renamingOrg.value = flat
+  renameFormName.value = flat.org.name
   renameError.value = ''
 }
 
-async function submitRenameRegion() {
-  if (!renamingRegion.value) return
+async function submitRenameOrg() {
+  if (!renamingOrg.value) return
   const name = renameFormName.value.trim()
-  if (!name) { renameError.value = '请输入区域名称'; return }
+  if (!name) { renameError.value = '请输入组织名称'; return }
   renaming.value = true
   renameError.value = ''
   try {
-    await renameRegion(renamingRegion.value.region.id, name)
-    renamingRegion.value = null
-    flashMessage('区域名称已更新')
-    await loadRegions()
+    await renameOrgUnit(renamingOrg.value.org.id, name)
+    renamingOrg.value = null
+    flashMessage('组织名称已更新')
+    await loadOrgUnits()
   } catch (error) {
     renameError.value = error instanceof Error ? error.message : '重命名失败'
   } finally {
@@ -212,23 +210,50 @@ async function submitRenameRegion() {
   }
 }
 
-const regionBusy = ref<Record<string, boolean>>({})
+const movingOrg = ref<FlatOrg | null>(null)
+const moveTargetID = ref('')
+const moving = ref(false)
+const moveError = ref('')
 
-async function removeRegion(flat: FlatRegion) {
-  const hasChildren = (flat.region.children?.length ?? 0) > 0
-  const message = hasChildren
-    ? `区域「${flat.region.name}」包含子区域，需先删除子区域。确定继续删除？`
-    : `确定删除区域「${flat.region.name}」？若仍有用户或设备引用该区域，删除将失败。`
-  if (!window.confirm(message)) return
-  regionBusy.value[flat.region.id] = true
+function openMoveOrg(flat: FlatOrg) {
+  movingOrg.value = flat
+  moveTargetID.value = flat.org.parent_id ?? ''
+  moveError.value = ''
+}
+
+async function submitMoveOrg() {
+  if (!movingOrg.value) return
+  moving.value = true
+  moveError.value = ''
   try {
-    await deleteRegion(flat.region.id)
-    flashMessage(`区域「${flat.region.name}」已删除`)
-    await loadRegions()
+    await moveOrgUnit(movingOrg.value.org.id, moveTargetID.value)
+    movingOrg.value = null
+    flashMessage('组织已移动')
+    await loadOrgUnits()
+  } catch (error) {
+    moveError.value = error instanceof Error ? error.message : '移动失败'
+  } finally {
+    moving.value = false
+  }
+}
+
+const orgBusy = ref<Record<string, boolean>>({})
+
+async function removeOrg(flat: FlatOrg) {
+  const hasChildren = (flat.org.children?.length ?? 0) > 0
+  const message = hasChildren
+    ? `组织「${flat.org.name}」包含子组织，需先删除子组织。确定继续删除？`
+    : `确定删除组织「${flat.org.name}」？若仍有用户或设备引用该组织，删除将失败。`
+  if (!window.confirm(message)) return
+  orgBusy.value[flat.org.id] = true
+  try {
+    await deleteOrgUnit(flat.org.id)
+    flashMessage(`组织「${flat.org.name}」已删除`)
+    await loadOrgUnits()
   } catch (error) {
     flashMessage(error instanceof Error ? error.message : '删除失败')
   } finally {
-    delete regionBusy.value[flat.region.id]
+    delete orgBusy.value[flat.org.id]
   }
 }
 
@@ -239,13 +264,13 @@ const stats = computed(() => {
     tenants: tenants.value.length,
     active,
     disabled: tenants.value.length - active,
-    regions: flatRegions.value.length,
+    orgs: flatOrgTree.value.length,
   }
 })
 
 const headAction = computed(() => {
   switch (tab.value) {
-    case 'regions': return { label: '新增根区域', icon: Network, run: () => openRegionModal('') }
+    case 'org-units': return { label: '新增根组织', icon: Network, run: () => openOrgModal('') }
     default: return { label: '新增租户', icon: Building2, run: openTenantModal }
   }
 })
@@ -270,12 +295,15 @@ onMounted(() => {
       const info = await me()
       nodeAdmin.value = (info.roles ?? []).includes('node_admin')
       if (!nodeAdmin.value) {
-        accessDenied.value = true
+        // tenant_admin: org-units tab only (own tenant)
+        tab.value = 'org-units'
+        await loadOrgUnits()
         return
       }
-      await Promise.all([loadTenants(), loadRegions()])
+      await Promise.all([loadTenants()])
+      await loadOrgUnits()
     } catch (error) {
-      tenantsError.value = error instanceof Error ? error.message : '初始化失败'
+      orgsError.value = error instanceof Error ? error.message : '初始化失败'
     }
   })()
 })
@@ -326,13 +354,14 @@ onUnmounted(() => {
         </div>
       </Transition>
 
-      <!-- access denied -->
-      <div v-if="accessDenied" class="prod-empty denied" role="alert">
-        <span class="prod-empty-icon"><ShieldCheck :size="26" /></span>
-        <strong>需要节点管理员权限</strong>
-        <p>组织架构管理仅对 node_admin 角色开放，请联系管理员调整你的角色。</p>
-        <RouterLink class="prod-button" to="/devices">前往设备管理</RouterLink>
-      </div>
+      <template v-if="accessDenied">
+        <div class="prod-empty denied" role="alert">
+          <span class="prod-empty-icon"><ShieldCheck :size="26" /></span>
+          <strong>需要节点管理员权限</strong>
+          <p>组织架构管理仅对 node_admin / tenant_admin 角色开放。</p>
+          <RouterLink class="prod-button" to="/devices">前往设备管理</RouterLink>
+        </div>
+      </template>
 
       <template v-else>
         <!-- stats cards -->
@@ -350,8 +379,8 @@ onUnmounted(() => {
             <strong class="prod-stat-value">{{ stats.disabled }}</strong>
           </div>
           <div class="prod-stat">
-            <span class="prod-stat-label"><Network :size="18" :stroke-width="2" />区域节点</span>
-            <strong class="prod-stat-value">{{ stats.regions }}</strong>
+            <span class="prod-stat-label"><Network :size="18" :stroke-width="2" />组织节点</span>
+            <strong class="prod-stat-value">{{ stats.orgs }}</strong>
           </div>
         </div>
 
@@ -442,27 +471,31 @@ onUnmounted(() => {
           </div>
         </section>
 
-        <!-- ============ regions tab ============ -->
-        <section v-else aria-label="区域管理">
+        <!-- ============ org-units tab ============ -->
+        <section v-else aria-label="组织单元管理">
           <div class="prod-toolbar-card">
-            <span class="prod-toolbar-hint">区域是树形数据范围；给用户分配父区域即可覆盖其整个子树。</span>
-            <button class="prod-refresh" type="button" :disabled="regionsLoading" aria-label="刷新区域列表" title="刷新" @click="loadRegions">
-              <RefreshCw :size="16" :class="{ spinning: regionsLoading }" />
+            <span class="prod-toolbar-hint">组织单元是树形数据范围；给用户分配父组织即可覆盖其整个子树。</span>
+            <select v-if="nodeAdmin" v-model="tenantFilter" class="prod-select" aria-label="按租户筛选" @change="loadOrgUnits()">
+              <option value="">全部租户</option>
+              <option v-for="t in tenants" :key="t.id" :value="t.id">{{ t.name }}</option>
+            </select>
+            <button class="prod-refresh" type="button" :disabled="orgsLoading" aria-label="刷新组织列表" title="刷新" @click="loadOrgUnits">
+              <RefreshCw :size="16" :class="{ spinning: orgsLoading }" />
             </button>
           </div>
 
-          <div v-if="regionsError" class="prod-error" role="alert">
+          <div v-if="orgsError" class="prod-error" role="alert">
             <AlertTriangle :size="18" />
             <div>
               <strong>加载失败</strong>
-              <p>{{ regionsError }}</p>
+              <p>{{ orgsError }}</p>
             </div>
-            <button class="prod-button" type="button" @click="loadRegions"><RefreshCw :size="14" />重试</button>
+            <button class="prod-button" type="button" @click="loadOrgUnits"><RefreshCw :size="14" />重试</button>
           </div>
 
-          <div v-else-if="regionsLoading" class="prod-table-card" aria-label="加载中">
+          <div v-else-if="orgsLoading" class="prod-table-card" aria-label="加载中">
             <div class="prod-thead" role="row">
-              <div role="columnheader">区域</div>
+              <div role="columnheader">组织</div>
               <div role="columnheader">创建时间</div>
               <div role="columnheader" class="th-actions">操作</div>
             </div>
@@ -473,26 +506,27 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div v-else-if="flatRegions.length > 0" class="prod-table-card">
+          <div v-else-if="flatOrgTree.length > 0" class="prod-table-card">
             <div class="prod-thead" role="row">
-              <div role="columnheader">区域</div>
+              <div role="columnheader">组织</div>
               <div role="columnheader">创建时间</div>
               <div role="columnheader" class="th-actions">操作</div>
             </div>
-            <div v-for="flat in flatRegions" :key="flat.region.id" class="prod-trow" role="row">
+            <div v-for="flat in flatOrgTree" :key="flat.org.id" class="prod-trow" role="row">
               <div role="cell">
                 <div class="prod-region-cell" :style="{ paddingLeft: `${flat.depth * 22 + 2}px` }">
                   <Network :size="14" class="prod-region-icon" />
-                  <span class="prod-region-name">{{ flat.region.name }}</span>
+                  <span class="prod-region-name">{{ flat.org.name }}</span>
                   <span class="prod-region-path">{{ flat.path }}</span>
                 </div>
               </div>
-              <div role="cell" class="prod-time mono">{{ formatDate(flat.region.created_at) }}</div>
+              <div role="cell" class="prod-time mono">{{ formatDate(flat.org.created_at) }}</div>
               <div role="cell" class="td-actions">
                 <div class="prod-actions">
-                  <button class="prod-act" type="button" title="添加子区域" aria-label="添加子区域" @click="openRegionModal(flat.region.id)"><Plus :size="15" /></button>
-                  <button class="prod-act" type="button" title="重命名" aria-label="重命名" @click="openRenameRegion(flat)"><Edit3 :size="15" /></button>
-                  <button class="prod-act danger" type="button" :disabled="regionBusy[flat.region.id]" title="删除" aria-label="删除" @click="removeRegion(flat)"><Trash2 :size="15" /></button>
+                  <button class="prod-act" type="button" title="添加子组织" aria-label="添加子组织" @click="openOrgModal(flat.org.id)"><Plus :size="15" /></button>
+                  <button class="prod-act" type="button" title="移动" aria-label="移动" @click="openMoveOrg(flat)"><Move :size="15" /></button>
+                  <button class="prod-act" type="button" title="重命名" aria-label="重命名" @click="openRenameOrg(flat)"><Edit3 :size="15" /></button>
+                  <button class="prod-act danger" type="button" :disabled="orgBusy[flat.org.id]" title="删除" aria-label="删除" @click="removeOrg(flat)"><Trash2 :size="15" /></button>
                 </div>
               </div>
             </div>
@@ -500,9 +534,9 @@ onUnmounted(() => {
 
           <div v-else class="prod-empty" role="status">
             <span class="prod-empty-icon"><Network :size="26" /></span>
-            <strong>还没有区域</strong>
-            <p>点击「新增根区域」创建第一个区域节点。</p>
-            <button class="prod-button prod-button-primary" type="button" @click="openRegionModal('')"><Plus :size="15" />新增根区域</button>
+            <strong>还没有组织</strong>
+            <p>点击「新增根组织」创建第一个组织节点。树从空开始，可自由定义。</p>
+            <button class="prod-button prod-button-primary" type="button" @click="openOrgModal('')"><Plus :size="15" />新增根组织</button>
           </div>
         </section>
       </template>
@@ -536,26 +570,26 @@ onUnmounted(() => {
       </Transition>
     </Teleport>
 
-    <!-- ============ region create modal ============ -->
+    <!-- ============ org create modal ============ -->
     <Teleport to="body">
       <Transition name="modal">
-        <div v-if="regionModalOpen" class="prod-overlay" @click.self="regionModalOpen = false">
-          <div class="prod-modal prod-modal-narrow" role="dialog" aria-modal="true" aria-label="新增区域">
+        <div v-if="orgModalOpen" class="prod-overlay" @click.self="orgModalOpen = false">
+          <div class="prod-modal prod-modal-narrow" role="dialog" aria-modal="true" aria-label="新增组织">
             <div class="prod-modal-head">
-              <h2>{{ regionParentID ? '新增子区域' : '新增根区域' }}</h2>
-              <button class="prod-icon" type="button" aria-label="关闭" @click="regionModalOpen = false"><X :size="16" /></button>
+              <h2>{{ orgParentID ? '新增子组织' : '新增根组织' }}</h2>
+              <button class="prod-icon" type="button" aria-label="关闭" @click="orgModalOpen = false"><X :size="16" /></button>
             </div>
-            <form class="prod-form" @submit.prevent="submitRegion">
+            <form class="prod-form" @submit.prevent="submitOrg">
               <div class="prod-field">
-                <label for="idm-region-name">区域名称</label>
-                <input id="idm-region-name" v-model="regionFormName" required maxlength="255" placeholder="如：杭州仓" />
-                <span class="prod-meta-hint">同级区域名称不可重复{{ regionParentID ? `，将创建在「${regionPath(regionParentID)}」之下` : '，将创建为根区域' }}。</span>
+                <label for="idm-org-name">组织名称</label>
+                <input id="idm-org-name" v-model="orgFormName" required maxlength="255" placeholder="如：杭州仓" />
+                <span class="prod-meta-hint">同级组织名称不可重复{{ orgParentID ? `，将创建在「${orgPath(orgParentID)}」之下` : '，将创建为根组织' }}。</span>
               </div>
-              <p v-if="regionError" class="prod-error" role="alert">{{ regionError }}</p>
+              <p v-if="orgError" class="prod-error" role="alert">{{ orgError }}</p>
               <div class="prod-modal-actions">
-                <button class="prod-button" type="button" @click="regionModalOpen = false">取消</button>
-                <button class="prod-button prod-button-primary" type="submit" :disabled="regionCreating">
-                  <Plus :size="16" />{{ regionCreating ? '创建中…' : '创建' }}
+                <button class="prod-button" type="button" @click="orgModalOpen = false">取消</button>
+                <button class="prod-button prod-button-primary" type="submit" :disabled="orgCreating">
+                  <Plus :size="16" />{{ orgCreating ? '创建中…' : '创建' }}
                 </button>
               </div>
             </form>
@@ -564,26 +598,57 @@ onUnmounted(() => {
       </Transition>
     </Teleport>
 
-    <!-- ============ region rename modal ============ -->
+    <!-- ============ org rename modal ============ -->
     <Teleport to="body">
       <Transition name="modal">
-        <div v-if="renamingRegion" class="prod-overlay" @click.self="renamingRegion = null">
-          <div class="prod-modal prod-modal-narrow" role="dialog" aria-modal="true" aria-label="重命名区域">
+        <div v-if="renamingOrg" class="prod-overlay" @click.self="renamingOrg = null">
+          <div class="prod-modal prod-modal-narrow" role="dialog" aria-modal="true" aria-label="重命名组织">
             <div class="prod-modal-head">
-              <h2>重命名区域</h2>
-              <button class="prod-icon" type="button" aria-label="关闭" @click="renamingRegion = null"><X :size="16" /></button>
+              <h2>重命名组织</h2>
+              <button class="prod-icon" type="button" aria-label="关闭" @click="renamingOrg = null"><X :size="16" /></button>
             </div>
-            <form class="prod-form" @submit.prevent="submitRenameRegion">
+            <form class="prod-form" @submit.prevent="submitRenameOrg">
               <div class="prod-field">
-                <label for="idm-region-rename">区域名称</label>
-                <input id="idm-region-rename" v-model="renameFormName" required maxlength="255" />
-                <span class="prod-meta-hint">当前路径：{{ renamingRegion.path }}</span>
+                <label for="idm-org-rename">组织名称</label>
+                <input id="idm-org-rename" v-model="renameFormName" required maxlength="255" />
+                <span class="prod-meta-hint">当前路径：{{ renamingOrg.path }}</span>
               </div>
               <p v-if="renameError" class="prod-error" role="alert">{{ renameError }}</p>
               <div class="prod-modal-actions">
-                <button class="prod-button" type="button" @click="renamingRegion = null">取消</button>
+                <button class="prod-button" type="button" @click="renamingOrg = null">取消</button>
                 <button class="prod-button prod-button-primary" type="submit" :disabled="renaming">
                   <Check :size="16" />{{ renaming ? '保存中…' : '保存' }}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- ============ org move modal ============ -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="movingOrg" class="prod-overlay" @click.self="movingOrg = null">
+          <div class="prod-modal prod-modal-narrow" role="dialog" aria-modal="true" aria-label="移动组织">
+            <div class="prod-modal-head">
+              <h2>移动组织</h2>
+              <button class="prod-icon" type="button" aria-label="关闭" @click="movingOrg = null"><X :size="16" /></button>
+            </div>
+            <form class="prod-form" @submit.prevent="submitMoveOrg">
+              <div class="prod-field">
+                <label for="idm-org-move">移动「{{ movingOrg.org.name }}」到</label>
+                <select id="idm-org-move" v-model="moveTargetID" class="prod-select prod-select-full">
+                  <option value="">根级（顶层）</option>
+                  <option v-for="f in flatOrgTree" :key="f.org.id" :value="f.org.id" :disabled="f.org.id === movingOrg.org.id">{{ f.path }}</option>
+                </select>
+                <span class="prod-meta-hint">整个子树随之移动；不能移动到自身或其子孙之下。</span>
+              </div>
+              <p v-if="moveError" class="prod-error" role="alert">{{ moveError }}</p>
+              <div class="prod-modal-actions">
+                <button class="prod-button" type="button" @click="movingOrg = null">取消</button>
+                <button class="prod-button prod-button-primary" type="submit" :disabled="moving">
+                  <Move :size="16" />{{ moving ? '移动中…' : '移动' }}
                 </button>
               </div>
             </form>
@@ -615,7 +680,6 @@ onUnmounted(() => {
 .health-down .prod-health-dot { background: #f87171; box-shadow: 0 0 0 3px rgba(248,113,113,.15); }
 /* ---------- main ---------- */
 .prod-main { max-width: 1200px; margin: 0 auto; padding: 0 32px 64px; }
-
 /* ---------- glass sticky title bar ---------- */
 .prod-head { position: sticky; top: 62px; z-index: 10; background: rgba(255,255,255,0.85); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(0,0,0,0.05); }
 .prod-head-inner { max-width: 1200px; margin: 0 auto; padding: 20px 32px; display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
@@ -641,6 +705,10 @@ onUnmounted(() => {
 /* ---------- toolbar card ---------- */
 .prod-toolbar-card { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; padding: 16px 20px; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
 .prod-toolbar-hint { flex: 1; color: #8E8E93; font-size: 12.5px; }
+.prod-select { height: 40px; padding: 0 34px 0 14px; font: inherit; font-size: 13px; font-weight: 500; color: #3A3A3C; background: #fff; border: 1.5px solid #E5E5EA; border-radius: 12px; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.prod-select:hover { border-color: #c7c7cc; }
+.prod-select:focus-visible { outline: none; border-color: #007AFF; box-shadow: 0 0 0 3px rgba(0,122,255,.15); }
+.prod-select-full { width: 100%; }
 .prod-refresh { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0; color: #636366; background: #fff; border: 1.5px solid #E5E5EA; border-radius: 10px; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
 .prod-refresh:hover:not(:disabled) { background: #F2F2F7; border-color: #C7C7CC; }
 .prod-refresh:disabled { cursor: wait; opacity: .5; }
@@ -655,19 +723,17 @@ onUnmounted(() => {
 .prod-button:focus-visible { outline: 2px solid #007AFF; outline-offset: 2px; }
 .prod-icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; color: #5f6873; background: #fff; border: 1px solid #d9dee4; border-radius: 9px; cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
 .prod-icon:hover:not(:disabled) { color: #1a1f26; border-color: #aeb7c1; }
-.prod-icon.danger:hover:not(:disabled) { color: #b44444; border-color: #e9c1c1; background: #fdf6f6; }
 .prod-icon:disabled { cursor: not-allowed; opacity: .45; }
 /* ---------- table ---------- */
 .prod-table-card { margin-bottom: 16px; overflow: hidden; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
 .prod-thead, .prod-trow { display: grid; align-items: center; }
-.prod-trow { grid-template-columns: 2fr 1fr 1.5fr 100px; }
-.prod-thead { grid-template-columns: 2fr 1fr 1.5fr 100px; }
+.prod-trow { grid-template-columns: 2fr 1fr 100px; }
+.prod-thead { grid-template-columns: 2fr 1fr 100px; }
 .prod-thead { padding: 14px 24px; background: #FAFAFA; border-bottom: 1px solid #F2F2F7; font-size: 12px; font-weight: 600; color: #8E8E93; text-transform: uppercase; letter-spacing: 0.5px; }
 .prod-thead .th-actions { text-align: right; }
 .prod-trow { padding: 16px 24px; border-bottom: 1px solid #F2F2F7; background: #fff; transition: background 0.15s; }
 .prod-trow:last-child { border-bottom: 0; }
 .prod-trow:hover { background: #FAFAFA; }
-.prod-trow:first-of-type { border-top: 0; }
 .prod-name-cell { min-width: 0; }
 .prod-name { font-weight: 600; color: #1C1C1E; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prod-name-sub { margin-top: 3px; color: #8E8E93; font-size: 11px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -737,7 +803,7 @@ onUnmounted(() => {
 /* ---------- reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {
   .sk, .spinning { animation: none; }
-  .prod-trow, .prod-button, .prod-act, .prod-icon, .prod-nav-link, .prod-tab, .prod-refresh, .prod-pill, .prod-field input { transition: none; }
+  .prod-trow, .prod-button, .prod-act, .prod-icon, .prod-nav-link, .prod-tab, .prod-refresh, .prod-pill, .prod-field input, .prod-select { transition: none; }
   .modal-enter-active, .modal-leave-active, .toast-enter-active, .toast-leave-active { transition: none; }
   .modal-enter-from, .modal-leave-to, .toast-enter-from, .toast-leave-to { opacity: 1; transform: none; }
 }
@@ -750,12 +816,11 @@ onUnmounted(() => {
   .prod-stats { grid-template-columns: repeat(2, 1fr); gap: 12px; }
   .prod-toolbar-card { gap: 12px; }
   .prod-table-card { overflow-x: auto; }
-  .prod-thead, .prod-trow { min-width: 640px; }
+  .prod-thead, .prod-trow { min-width: 560px; }
 }
 @media (max-width: 640px) {
   .prod-head-inner { flex-direction: column; align-items: stretch; }
   .prod-head .prod-button-primary { align-self: flex-start; }
-  /* 移动端：操作按钮常显 + 触控目标 ≥44px */
   .prod-act { opacity: 1 !important; width: 44px; height: 44px; }
   .prod-actions { opacity: 1; }
 }

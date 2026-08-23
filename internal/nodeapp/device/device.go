@@ -35,7 +35,7 @@ var (
 type Device struct {
 	ID                  string        `json:"id"`
 	TenantID            string        `json:"tenant_id"`
-	RegionID            string        `json:"region_id"`
+	OrgUnitID           *string       `json:"org_unit_id,omitempty"`
 	DeviceAccessID      string        `json:"device_access_id"`
 	DeviceName          string        `json:"device_name"`
 	Manufacturer        string        `json:"manufacturer"`
@@ -55,7 +55,7 @@ type Device struct {
 
 type CreateDeviceInput struct {
 	TenantID   string `json:"-"`
-	RegionID   string `json:"region_id"`
+	OrgUnitID  *string `json:"org_unit_id"`
 	CenterCode string `json:"center_code"`
 	DeviceType string `json:"device_type"`
 	DeviceName string `json:"device_name"`
@@ -82,8 +82,8 @@ func validDeviceType(t string) bool {
 }
 
 func (in CreateDeviceInput) Validate() error {
-	if in.RegionID == "" || !uuidPattern.MatchString(in.RegionID) {
-		return fmt.Errorf("%w: region_id must be a valid UUID", ErrInvalid)
+	if in.OrgUnitID != nil && !uuidPattern.MatchString(*in.OrgUnitID) {
+		return fmt.Errorf("%w: org_unit_id must be a valid UUID", ErrInvalid)
 	}
 	if !centerCodePattern.MatchString(in.CenterCode) {
 		return fmt.Errorf("%w: center_code must contain exactly 8 digits", ErrInvalid)
@@ -142,9 +142,10 @@ type DeviceRepository interface {
 	Get(context.Context, string) (Device, error)
 	SetEnabled(context.Context, string, bool) (Device, error)
 	UpdateMeta(context.Context, string, *string, *string) (Device, error)
+	SetOrgUnit(context.Context, string, *string) (Device, error)
 	GetByAccessID(context.Context, string) (Device, error)
 	List(context.Context) ([]Device, error)
-	ListByTenant(context.Context, string, []string) ([]Device, error)
+	ListByTenant(context.Context, string, []string, bool) ([]Device, error)
 	NextPending(context.Context) (Device, bool, error)
 	MarkSynced(context.Context, string, int64) error
 	MarkReconciled(context.Context, []ReconciledProfile) error
@@ -158,14 +159,16 @@ func NewPostgresDeviceRepository(pool *pgxpool.Pool) *PostgresDeviceRepository {
 	return &PostgresDeviceRepository{pool: pool}
 }
 
-const deviceColumns = `id, tenant_id, region_id, device_access_id, device_name, manufacturer, device_type, sip_username, sip_realm, digest_algorithm, digest_ha1,
+const deviceColumns = `id, tenant_id, org_unit_id, device_access_id, device_name, manufacturer, device_type, sip_username, sip_realm, digest_algorithm, digest_ha1,
  enabled, profile_version, access_sync_status, access_synced_version, created_at, updated_at`
 
 func scanDevice(row pgx.Row) (Device, error) {
 	var d Device
-	err := row.Scan(&d.ID, &d.TenantID, &d.RegionID, &d.DeviceAccessID, &d.DeviceName, &d.Manufacturer, &d.DeviceType,
+	var orgUnitID *string
+	err := row.Scan(&d.ID, &d.TenantID, &orgUnitID, &d.DeviceAccessID, &d.DeviceName, &d.Manufacturer, &d.DeviceType,
 		&d.SIPUsername, &d.SIPRealm, &d.DigestAlgorithm, &d.DigestHA1,
 		&d.Enabled, &d.ProfileVersion, &d.AccessSyncStatus, &d.AccessSyncedVersion, &d.CreatedAt, &d.UpdatedAt)
+	d.OrgUnitID = orgUnitID
 	return d, err
 }
 
@@ -181,9 +184,9 @@ func (r *PostgresDeviceRepository) Create(ctx context.Context, in CreateDeviceIn
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	d, err := scanDevice(tx.QueryRow(ctx, `INSERT INTO devices
- (tenant_id, region_id, device_access_id, device_name, manufacturer, device_type, sip_username, sip_realm, digest_ha1, enabled)
+ (tenant_id, org_unit_id, device_access_id, device_name, manufacturer, device_type, sip_username, sip_realm, digest_ha1, enabled)
  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING `+deviceColumns,
-		in.TenantID, in.RegionID, accessID, in.DeviceName, in.Manufacturer, in.DeviceType, accessID, in.SIPRealm, ha1, in.Enabled))
+		in.TenantID, in.OrgUnitID, accessID, in.DeviceName, in.Manufacturer, in.DeviceType, accessID, in.SIPRealm, ha1, in.Enabled))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -215,6 +218,33 @@ func (r *PostgresDeviceRepository) allocateAccessID(ctx context.Context, prefix 
 		return "", fmt.Errorf("%w: sequence exhausted for prefix %s", ErrInvalid, prefix)
 	}
 	return prefix + fmt.Sprintf("%06d", next), nil
+}
+
+// SetOrgUnit assigns (or clears, when orgUnitID is nil) a device's org unit.
+func (r *PostgresDeviceRepository) SetOrgUnit(ctx context.Context, id string, orgUnitID *string) (Device, error) {
+	if !uuidPattern.MatchString(id) {
+		return Device{}, ErrNotFound
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Device{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	d, err := scanDevice(tx.QueryRow(ctx, `SELECT `+deviceColumns+` FROM devices WHERE id=$1 FOR UPDATE`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Device{}, ErrNotFound
+	}
+	if err != nil {
+		return Device{}, err
+	}
+	d, err = scanDevice(tx.QueryRow(ctx, `UPDATE devices SET org_unit_id=$2, updated_at=now() WHERE id=$1 RETURNING `+deviceColumns, id, orgUnitID))
+	if err != nil {
+		return Device{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Device{}, err
+	}
+	return d, nil
 }
 
 func (r *PostgresDeviceRepository) Get(ctx context.Context, id string) (Device, error) {
@@ -325,14 +355,26 @@ func (r *PostgresDeviceRepository) List(ctx context.Context) ([]Device, error) {
 	return devices, rows.Err()
 }
 
-// ListByTenant returns devices belonging to the tenant and to any region in
-// the allowed set (the caller's visible region subtree).
-func (r *PostgresDeviceRepository) ListByTenant(ctx context.Context, tenantID string, allowedRegionIDs []string) ([]Device, error) {
-	if len(allowedRegionIDs) == 0 {
-		return []Device{}, nil
+// ListByTenant returns devices belonging to the tenant. Full-visibility
+// callers (node_admin / all_orgs) pass includeUnassigned=true and see every
+// device in the tenant. Scoped callers pass includeUnassigned=false and see
+// only devices whose org unit is inside the allowed set; an empty allowed
+// set denies everything (default deny).
+func (r *PostgresDeviceRepository) ListByTenant(ctx context.Context, tenantID string, allowedOrgUnitIDs []string, includeUnassigned bool) ([]Device, error) {
+	var rows pgx.Rows
+	var err error
+	if includeUnassigned {
+		// Full tenant visibility: org filter is irrelevant.
+		rows, err = r.pool.Query(ctx, `SELECT `+deviceColumns+` FROM devices
+ WHERE tenant_id = $1 ORDER BY device_access_id`, tenantID)
+	} else {
+		if len(allowedOrgUnitIDs) == 0 {
+			return []Device{}, nil
+		}
+		rows, err = r.pool.Query(ctx, `SELECT `+deviceColumns+` FROM devices
+ WHERE tenant_id = $1 AND org_unit_id = ANY($2)
+ ORDER BY device_access_id`, tenantID, allowedOrgUnitIDs)
 	}
-	rows, err := r.pool.Query(ctx, `SELECT `+deviceColumns+` FROM devices
- WHERE tenant_id = $1 AND region_id = ANY($2) ORDER BY device_access_id`, tenantID, allowedRegionIDs)
 	if err != nil {
 		return nil, err
 	}

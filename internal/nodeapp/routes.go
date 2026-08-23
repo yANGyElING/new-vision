@@ -29,10 +29,11 @@ type accessEndpoints struct {
 }
 
 // Routes wires the full HTTP surface: health (anonymous), auth, identity
-// management, devices, access console, and the test-only SIP simulator.
+// management, org-units, users, devices, access console, and the test-only
+// SIP simulator.
 //
-// The scope wrapper attaches the caller's tenant and expanded visible region
-// ids (subtree) to the request context before device handlers run.
+// The scope wrapper attaches the caller's tenant and expanded visible org
+// unit ids (subtree) to the request context before device handlers run.
 func NewRoutes(
 	mux *http.ServeMux,
 	authnHandler *authn.Handler,
@@ -41,7 +42,7 @@ func NewRoutes(
 	devices device.DeviceEndpoints,
 	accessEP accessEndpoints,
 	sip *siptest.SIPSimulator,
-	regions identity.RegionRepository,
+	orgUnits identity.OrgUnitRepository,
 	users identity.UserRepository,
 	auditWriter *audit.Writer,
 ) {
@@ -52,12 +53,12 @@ func NewRoutes(
 				writeAPIError(w, http.StatusUnauthorized, "unauthorized", "missing principal")
 				return
 			}
-			regionIDs, err := visibleRegionIDs(r.Context(), regions, users, p)
+			orgUnitIDs, includeUnassigned, err := visibleOrgIDs(r.Context(), orgUnits, users, p)
 			if err != nil {
 				writeAPIError(w, http.StatusServiceUnavailable, "service_unavailable", "scope resolution unavailable")
 				return
 			}
-			ctx := device.WithScope(r.Context(), p.TenantID, regionIDs)
+			ctx := device.WithScope(r.Context(), p.TenantID, orgUnitIDs, includeUnassigned)
 			next(w, r.WithContext(ctx))
 		}
 	}
@@ -66,14 +67,18 @@ func NewRoutes(
 	mux.HandleFunc("POST /api/v1/auth/login", authnHandler.Login)
 	mux.HandleFunc("GET /api/v1/auth/me", authzMiddleware.AuthenticatedOnly(authnHandler.Me))
 
-	// Identity management (node_admin only, mapped to identity:manage).
+	// Identity management: tenants (node_admin, identity:manage).
 	mux.HandleFunc("POST /api/v1/tenants", authzMiddleware.With("identity", "manage", identityHandler.CreateTenant))
 	mux.HandleFunc("GET /api/v1/tenants", authzMiddleware.With("identity", "manage", identityHandler.ListTenants))
 	mux.HandleFunc("PATCH /api/v1/tenants/{id}", authzMiddleware.With("identity", "manage", identityHandler.PatchTenant))
-	mux.HandleFunc("POST /api/v1/regions", authzMiddleware.With("identity", "manage", identityHandler.CreateRegion))
-	mux.HandleFunc("GET /api/v1/regions", authzMiddleware.With("identity", "manage", identityHandler.ListRegions))
-	mux.HandleFunc("PATCH /api/v1/regions/{id}", authzMiddleware.With("identity", "manage", identityHandler.PatchRegion))
-	mux.HandleFunc("DELETE /api/v1/regions/{id}", authzMiddleware.With("identity", "manage", identityHandler.DeleteRegion))
+
+	// Org unit management (org_unit:manage: node_admin full, tenant_admin own-tenant).
+	mux.HandleFunc("POST /api/v1/org-units", authzMiddleware.With("org_unit", "manage", identityHandler.CreateOrgUnit))
+	mux.HandleFunc("GET /api/v1/org-units", authzMiddleware.With("org_unit", "manage", identityHandler.ListOrgUnits))
+	mux.HandleFunc("PATCH /api/v1/org-units/{id}", authzMiddleware.With("org_unit", "manage", identityHandler.PatchOrgUnit))
+	mux.HandleFunc("DELETE /api/v1/org-units/{id}", authzMiddleware.With("org_unit", "manage", identityHandler.DeleteOrgUnit))
+
+	// User management (node_admin, identity:manage).
 	mux.HandleFunc("POST /api/v1/users", authzMiddleware.With("identity", "manage", identityHandler.CreateUser))
 	mux.HandleFunc("GET /api/v1/users", authzMiddleware.With("identity", "manage", identityHandler.ListUsers))
 	mux.HandleFunc("GET /api/v1/users/{id}", authzMiddleware.With("identity", "manage", identityHandler.GetUser))
@@ -83,7 +88,7 @@ func NewRoutes(
 	mux.HandleFunc("GET /api/v1/roles", authzMiddleware.With("identity", "manage", identityHandler.ListRoles))
 
 	// Device management (mapped to device:* permission points); scope wrapper
-	// attaches tenant + visible regions for data filtering.
+	// attaches tenant + visible org units for data filtering.
 	deviceGuard := func(obj, act string, h http.HandlerFunc) http.HandlerFunc {
 		return authzMiddleware.With(obj, act, scope(h))
 	}
@@ -176,22 +181,35 @@ func NewRoutes(
 	}
 }
 
-// visibleRegionIDs resolves the principal's region scopes to the full set of
-// visible region ids (each scoped region expanded to its subtree).
-func visibleRegionIDs(ctx context.Context, regions identity.RegionRepository, users identity.UserRepository, p *authn.Principal) ([]string, error) {
+// visibleOrgIDs resolves the principal's data scope to the full set of
+// visible org unit ids.
+//
+//   - node_admin: all org units, include unassigned (short-circuit, no lookup)
+//   - all_orgs user: all org units in the tenant, include unassigned
+//   - scoped user: each scoped org unit expanded to its subtree, no unassigned
+//   - empty scopes (non-admin, non-all_orgs): empty set → nothing visible
+func visibleOrgIDs(ctx context.Context, orgUnits identity.OrgUnitRepository, users identity.UserRepository, p *authn.Principal) (ids []string, includeUnassigned bool, err error) {
+	// node_admin: short-circuit — no need to load from DB.
+	for _, role := range p.Roles {
+		if role == identity.RoleNodeAdmin {
+			return []string{}, true, nil
+		}
+	}
 	user, err := users.Get(ctx, p.TenantID, p.UserID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	var ids []string
-	for _, regionID := range user.RegionIDs {
-		subtree, err := regions.SubtreeIDs(ctx, regionID)
-		if err != nil {
-			return nil, err
-		}
-		ids = append(ids, subtree...)
+	if user.AllOrgs {
+		return []string{}, true, nil
 	}
-	return ids, nil
+	if len(user.OrgIDs) == 0 {
+		return []string{}, false, nil
+	}
+	ids, err = orgUnits.SubtreeIDs(ctx, user.OrgIDs)
+	if err != nil {
+		return nil, false, err
+	}
+	return ids, false, nil
 }
 
 func parseNonNegativeIntQuery(r *http.Request, name string, defaultValue int64) (int64, error) {

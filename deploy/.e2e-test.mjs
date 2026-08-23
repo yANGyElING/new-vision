@@ -10,8 +10,7 @@ if (!ADMIN_PASSWORD) {
 const ADMIN = { tenant: 'default', username: ADMIN_USERNAME, password: ADMIN_PASSWORD }
 // unique per-run suffix so the suite is re-runnable against live data
 const S = Date.now().toString(36)
-const NAME = { region: `e2e-region-${S}`, viewer: `e2e-viewer-${S}`, tenant: `e2e-tenant-${S}`, cross: `e2e-op-${S}`, device: `e2e-device-${S}` }
-const ROOT_REGION = '00000000-0000-0000-0000-000000000002'
+const NAME = { org: `e2e-org-${S}`, viewer: `e2e-viewer-${S}`, tenant: `e2e-tenant-${S}`, cross: `e2e-op-${S}`, device: `e2e-device-${S}` }
 
 const results = []
 let step = 0
@@ -54,16 +53,16 @@ report('no token -> 401', noAuth.status === 401, `status=${noAuth.status}`)
 const roles = await api('GET', '/api/v1/roles', { token: adminToken })
 report('GET /roles -> 4 fixed roles', roles.status === 200 && JSON.stringify(roles.json?.roles) === JSON.stringify(['node_admin', 'tenant_admin', 'operator', 'viewer']), JSON.stringify(roles.json?.roles))
 
-const regionsBefore = await api('GET', '/api/v1/regions', { token: adminToken })
-report('GET /regions -> tree with root', regionsBefore.status === 200 && Array.isArray(regionsBefore.json) && regionsBefore.json.some((r) => r.id === ROOT_REGION))
+const orgsBefore = await api('GET', '/api/v1/org-units', { token: adminToken })
+report('GET /org-units -> empty tree (no seed root)', orgsBefore.status === 200 && Array.isArray(orgsBefore.json) && orgsBefore.json.length === 0, `count=${orgsBefore.json?.length}`)
 
-const mkRegion = await api('POST', '/api/v1/regions', { token: adminToken, body: { parent_id: ROOT_REGION, name: NAME.region } })
-report('create region -> 201', mkRegion.status === 201 && !!mkRegion.json?.id, `status=${mkRegion.status}`)
-const regionID = mkRegion.json?.id
+const mkOrg = await api('POST', '/api/v1/org-units', { token: adminToken, body: { parent_id: '', name: NAME.org } })
+report('create org-unit -> 201', mkOrg.status === 201 && !!mkOrg.json?.id, `status=${mkOrg.status}`)
+const orgID = mkOrg.json?.id
 
 const mkViewer = await api('POST', '/api/v1/users', {
   token: adminToken,
-  body: { tenant_id: '', username: NAME.viewer, password: 'ViewerPass123', display_name: 'E2E Viewer', roles: ['viewer'], region_ids: regionID ? [regionID] : [] },
+  body: { tenant_id: '', username: NAME.viewer, password: 'ViewerPass123', display_name: 'E2E Viewer', roles: ['viewer'], org_ids: orgID ? [orgID] : [] },
 })
 report('create user (viewer) -> 201 + roles', mkViewer.status === 201 && JSON.stringify(mkViewer.json?.roles) === '["viewer"]', `status=${mkViewer.status}`)
 const viewerID = mkViewer.json?.id
@@ -71,7 +70,7 @@ const viewerID = mkViewer.json?.id
 const listUsers = await api('GET', '/api/v1/users', { token: adminToken })
 report('GET /users contains e2e-viewer', listUsers.status === 200 && listUsers.json?.some((u) => u.username === NAME.viewer))
 
-// ---------- C. casbin enforcement (viewer) ----------
+// ---------- C. permission enforcement (viewer) ----------
 const viewerLogin = await api('POST', '/api/v1/auth/login', { body: { tenant: 'default', username: NAME.viewer, password: 'ViewerPass123' } })
 report('viewer login -> 200', viewerLogin.status === 200 && !!viewerLogin.json?.token, `status=${viewerLogin.status}`)
 const viewerToken = viewerLogin.json?.token
@@ -79,12 +78,15 @@ const viewerToken = viewerLogin.json?.token
 const vListUsers = await api('GET', '/api/v1/users', { token: viewerToken })
 report('viewer GET /users -> 403 (identity:manage denied)', vListUsers.status === 403, `status=${vListUsers.status}`)
 
+const vListOrgs = await api('GET', '/api/v1/org-units', { token: viewerToken })
+report('viewer GET /org-units -> 403 (org_unit:manage denied)', vListOrgs.status === 403, `status=${vListOrgs.status}`)
+
 const vListDevices = await api('GET', '/api/v1/devices', { token: viewerToken })
 report('viewer GET /devices -> 200 (device:view allowed)', vListDevices.status === 200, `status=${vListDevices.status}`)
 
 const vMkDevice = await api('POST', '/api/v1/devices', {
   token: viewerToken,
-  body: { region_id: regionID, center_code: '34029999', device_type: '132', device_name: 'x', manufacturer: 'x', sip_realm: '3402000000', password: 'x', enabled: true },
+  body: { org_unit_id: orgID, center_code: '34029999', device_type: '132', device_name: 'x', manufacturer: 'x', sip_realm: '3402000000', password: 'x', enabled: true },
 })
 report('viewer POST /devices -> 403 (device:create denied)', vMkDevice.status === 403, `status=${vMkDevice.status}`)
 
@@ -94,7 +96,7 @@ report('PATCH viewer -> operator', patchRole.status === 200 && JSON.stringify(pa
 
 const mkDevice = await api('POST', '/api/v1/devices', {
   token: adminToken,
-  body: { region_id: regionID, center_code: '34029998', device_type: '132', device_name: NAME.device, manufacturer: 'e2e', sip_realm: '3402000000', password: 'devpass', enabled: false },
+  body: { org_unit_id: orgID, center_code: '34029998', device_type: '132', device_name: NAME.device, manufacturer: 'e2e', sip_realm: '3402000000', password: 'devpass', enabled: false },
 })
 report('admin create device -> 201', mkDevice.status === 201 && !!mkDevice.json?.id, `status=${mkDevice.status} id=${mkDevice.json?.device_access_id}`)
 const deviceID = mkDevice.json?.id
@@ -102,7 +104,7 @@ const deviceID = mkDevice.json?.id
 // same (old) viewer token, now operator: still no create, but enable allowed
 const opMkDevice = await api('POST', '/api/v1/devices', {
   token: viewerToken,
-  body: { region_id: regionID, center_code: '34029997', device_type: '132', device_name: 'x', manufacturer: 'x', sip_realm: '3402000000', password: 'x', enabled: true },
+  body: { org_unit_id: orgID, center_code: '34029997', device_type: '132', device_name: 'x', manufacturer: 'x', sip_realm: '3402000000', password: 'x', enabled: true },
 })
 report('operator(old token) POST /devices -> 403 (still no create)', opMkDevice.status === 403, `status=${opMkDevice.status}`)
 
@@ -129,7 +131,7 @@ const tenantID = mkTenant.json?.id
 
 const mkCross = await api('POST', '/api/v1/users', {
   token: adminToken,
-  body: { tenant_id: tenantID, username: NAME.cross, password: 'OpPass789', display_name: 'E2E Cross Tenant', roles: ['operator'], region_ids: [] },
+  body: { tenant_id: tenantID, username: NAME.cross, password: 'OpPass789', display_name: 'E2E Cross Tenant', roles: ['operator'], org_ids: [] },
 })
 report('node_admin creates user in other tenant -> 201', mkCross.status === 201 && mkCross.json?.tenant_id === tenantID, `status=${mkCross.status}`)
 const crossUserID = mkCross.json?.id
@@ -156,8 +158,8 @@ report('cleanup: delete e2e-viewer -> 204', delViewer.status === 204)
 const delCross = await api('DELETE', `/api/v1/users/${crossUserID}?tenant_id=${tenantID}`, { token: adminToken, body: undefined })
 report('cleanup: delete cross-tenant user -> 204', delCross.status === 204)
 
-const delRegion = await api('DELETE', `/api/v1/regions/${regionID}`, { token: adminToken })
-report('cleanup: delete region -> 204', delRegion.status === 204)
+const delOrg = await api('DELETE', `/api/v1/org-units/${orgID}`, { token: adminToken })
+report('cleanup: delete org-unit -> 204', delOrg.status === 204)
 
 // ---------- summary ----------
 const failed = results.filter((r) => !r.pass)

@@ -16,9 +16,10 @@ type DeviceEndpoints interface {
 	Get(context.Context, string) (Device, error)
 	SetEnabled(context.Context, string, bool) (Device, error)
 	UpdateMeta(context.Context, string, *string, *string) (Device, error)
-	List(context.Context, string, []string) ([]Device, error)
+	SetOrgUnit(context.Context, string, *string) (Device, error)
+	List(context.Context, string, []string, bool) ([]Device, error)
 	Delete(context.Context, string) error
-	EnsureVisible(context.Context, string, []string, string) (Device, error)
+	EnsureVisible(context.Context, string, []string, bool, string) (Device, error)
 }
 
 // AuditRecorder reports a successful device operation for the audit log.
@@ -30,7 +31,7 @@ type AuditRecorder func(ctx context.Context, action, resourceID string, detail m
 // audit recorder logs successful device operations.
 func RegisterRoutes(mux *http.ServeMux, service DeviceEndpoints, guard func(obj, act string, h http.HandlerFunc) http.HandlerFunc, audit AuditRecorder) {
 	mux.HandleFunc("GET /api/v1/devices", guard("device", "view", func(w http.ResponseWriter, r *http.Request) {
-		devices, err := service.List(r.Context(), tenantID(r), regionIDs(r))
+		devices, err := service.List(r.Context(), tenantID(r), orgUnitIDs(r), includeUnassigned(r))
 		if err != nil {
 			writeDeviceError(w, err)
 			return
@@ -42,10 +43,11 @@ func RegisterRoutes(mux *http.ServeMux, service DeviceEndpoints, guard func(obj,
 		if !ok {
 			return
 		}
-		// The device must be created inside a region the caller can see;
-		// otherwise it would become an invisible orphan in the list.
-		if !regionAllowed(regionIDs(r), request.RegionID) {
-			writeAPIError(w, http.StatusForbidden, "forbidden", "region is outside your scope")
+		// A device created with an org unit must use one the caller can see.
+		// An unassigned device (no org) is allowed — it enters the limbo
+		// group visible only to platform-level callers.
+		if request.OrgUnitID != nil && !orgUnitAllowed(orgUnitIDs(r), includeUnassigned(r), *request.OrgUnitID) {
+			writeAPIError(w, http.StatusForbidden, "forbidden", "org_unit is outside your scope")
 			return
 		}
 		request.TenantID = tenantID(r)
@@ -60,7 +62,7 @@ func RegisterRoutes(mux *http.ServeMux, service DeviceEndpoints, guard func(obj,
 		writeJSON(w, http.StatusCreated, device)
 	}))
 	mux.HandleFunc("GET /api/v1/devices/{id}", guard("device", "view", func(w http.ResponseWriter, r *http.Request) {
-		device, err := service.EnsureVisible(r.Context(), tenantID(r), regionIDs(r), r.PathValue("id"))
+		device, err := service.EnsureVisible(r.Context(), tenantID(r), orgUnitIDs(r), includeUnassigned(r), r.PathValue("id"))
 		if err != nil {
 			writeDeviceError(w, err)
 			return
@@ -68,26 +70,28 @@ func RegisterRoutes(mux *http.ServeMux, service DeviceEndpoints, guard func(obj,
 		writeJSON(w, http.StatusOK, device)
 	}))
 	mux.HandleFunc("PATCH /api/v1/devices/{id}", func(w http.ResponseWriter, r *http.Request) {
-		// Decode once, then dispatch to the correct permission point: enabling
-		// requires device:enable (operator), metadata edits require
-		// device:update (tenant_admin and above).
+		// Decode once, then dispatch to the correct permission point:
+		// enabling requires device:enable (operator), metadata edits require
+		// device:update (tenant_admin and above), org assignment requires
+		// device:update.
 		request := struct {
 			Enabled      *bool   `json:"enabled"`
 			DeviceName   *string `json:"device_name"`
 			Manufacturer *string `json:"manufacturer"`
+			OrgUnitID    *string `json:"org_unit_id"`
 		}{}
 		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
-		if request.Enabled == nil && request.DeviceName == nil && request.Manufacturer == nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid_request", "at least one of enabled, device_name, manufacturer is required")
+		if request.Enabled == nil && request.DeviceName == nil && request.Manufacturer == nil && request.OrgUnitID == nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "at least one of enabled, device_name, manufacturer, org_unit_id is required")
 			return
 		}
 		id := r.PathValue("id")
 		if request.Enabled != nil {
 			guard("device", "enable", func(w http.ResponseWriter, r *http.Request) {
-				if _, err := service.EnsureVisible(r.Context(), tenantID(r), regionIDs(r), id); err != nil {
+				if _, err := service.EnsureVisible(r.Context(), tenantID(r), orgUnitIDs(r), includeUnassigned(r), id); err != nil {
 					writeDeviceError(w, err)
 					return
 				}
@@ -104,7 +108,7 @@ func RegisterRoutes(mux *http.ServeMux, service DeviceEndpoints, guard func(obj,
 			return
 		}
 		guard("device", "update", func(w http.ResponseWriter, r *http.Request) {
-			if _, err := service.EnsureVisible(r.Context(), tenantID(r), regionIDs(r), id); err != nil {
+			if _, err := service.EnsureVisible(r.Context(), tenantID(r), orgUnitIDs(r), includeUnassigned(r), id); err != nil {
 				writeDeviceError(w, err)
 				return
 			}
@@ -116,10 +120,27 @@ func RegisterRoutes(mux *http.ServeMux, service DeviceEndpoints, guard func(obj,
 				writeAPIError(w, http.StatusBadRequest, "invalid_request", "manufacturer must be non-empty")
 				return
 			}
+			// Org assignment: the new org must be inside the caller's scope.
+			if request.OrgUnitID != nil && *request.OrgUnitID != "" && !orgUnitAllowed(orgUnitIDs(r), includeUnassigned(r), *request.OrgUnitID) {
+				writeAPIError(w, http.StatusForbidden, "forbidden", "org_unit is outside your scope")
+				return
+			}
+			// OrgUnitID: "" means clear the assignment; a value assigns.
+			var newOrg *string
+			if request.OrgUnitID != nil && *request.OrgUnitID != "" {
+				newOrg = request.OrgUnitID
+			}
 			device, err := service.UpdateMeta(r.Context(), id, request.DeviceName, request.Manufacturer)
 			if err != nil {
 				writeDeviceError(w, err)
 				return
+			}
+			if request.OrgUnitID != nil {
+				device, err = service.SetOrgUnit(r.Context(), id, newOrg)
+				if err != nil {
+					writeDeviceError(w, err)
+					return
+				}
 			}
 			if audit != nil {
 				audit(r.Context(), "device.update", id, nil)
@@ -128,7 +149,7 @@ func RegisterRoutes(mux *http.ServeMux, service DeviceEndpoints, guard func(obj,
 		})(w, r)
 	})
 	mux.HandleFunc("DELETE /api/v1/devices/{id}", guard("device", "delete", func(w http.ResponseWriter, r *http.Request) {
-		if _, err := service.EnsureVisible(r.Context(), tenantID(r), regionIDs(r), r.PathValue("id")); err != nil {
+		if _, err := service.EnsureVisible(r.Context(), tenantID(r), orgUnitIDs(r), includeUnassigned(r), r.PathValue("id")); err != nil {
 			writeDeviceError(w, err)
 			return
 		}
@@ -143,12 +164,16 @@ func RegisterRoutes(mux *http.ServeMux, service DeviceEndpoints, guard func(obj,
 	}))
 }
 
-// regionAllowed reports whether regionID is inside the allowed region set
-// (the caller's visible region subtree, possibly empty). An empty set denies
-// everything.
-func regionAllowed(allowed []string, regionID string) bool {
+// orgUnitAllowed reports whether orgUnitID is inside the allowed org set
+// (the caller's visible org subtree, possibly empty). Full-visibility
+// callers (includeUnassigned=true, i.e. node_admin / all_orgs) are allowed
+// to assign any org. An empty set with no full visibility denies everything.
+func orgUnitAllowed(allowed []string, includeUnassigned bool, orgUnitID string) bool {
+	if includeUnassigned {
+		return true
+	}
 	for _, id := range allowed {
-		if id == regionID {
+		if id == orgUnitID {
 			return true
 		}
 	}
@@ -170,7 +195,7 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, target any) error {
 
 func decodeCreateDeviceBody(w http.ResponseWriter, r *http.Request) (CreateDeviceInput, bool) {
 	var request struct {
-		RegionID     string `json:"region_id"`
+		OrgUnitID    string `json:"org_unit_id"`
 		CenterCode   string `json:"center_code"`
 		DeviceType   string `json:"device_type"`
 		DeviceName   string `json:"device_name"`
@@ -183,23 +208,23 @@ func decodeCreateDeviceBody(w http.ResponseWriter, r *http.Request) (CreateDevic
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return CreateDeviceInput{}, false
 	}
-	if request.RegionID == "" {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "region_id is required")
-		return CreateDeviceInput{}, false
-	}
 	if request.Enabled == nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "enabled is required")
 		return CreateDeviceInput{}, false
 	}
+	var orgUnitID *string
+	if request.OrgUnitID != "" {
+		orgUnitID = &request.OrgUnitID
+	}
 	return CreateDeviceInput{
-		RegionID:     request.RegionID,
-		CenterCode:   request.CenterCode,
-		DeviceType:   request.DeviceType,
-		DeviceName:   request.DeviceName,
+		OrgUnitID:  orgUnitID,
+		CenterCode: request.CenterCode,
+		DeviceType: request.DeviceType,
+		DeviceName: request.DeviceName,
 		Manufacturer: request.Manufacturer,
-		SIPRealm:     request.SIPRealm,
-		Password:     request.Password,
-		Enabled:      *request.Enabled,
+		SIPRealm:   request.SIPRealm,
+		Password:   request.Password,
+		Enabled:    *request.Enabled,
 	}, true
 }
 
@@ -228,8 +253,9 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-// tenantID and regionIDs read the caller scope from the request context.
-// The nodeapp wiring attaches them via WithScope after authentication.
+// tenantID, orgUnitIDs and includeUnassigned read the caller scope from the
+// request context. The nodeapp wiring attaches them via WithScope after
+// authentication.
 func tenantID(r *http.Request) string {
 	ctx := r.Context()
 	if v, ok := ctx.Value(tenantKey{}).(string); ok {
@@ -238,21 +264,32 @@ func tenantID(r *http.Request) string {
 	return ""
 }
 
-func regionIDs(r *http.Request) []string {
+func orgUnitIDs(r *http.Request) []string {
 	ctx := r.Context()
-	if v, ok := ctx.Value(regionKey{}).([]string); ok {
+	if v, ok := ctx.Value(orgKey{}).([]string); ok {
 		return v
 	}
 	return nil
 }
 
-// WithScope attaches the caller tenant and expanded visible region ids to
-// the context so device handlers can filter by data scope.
-func WithScope(ctx context.Context, tenantID string, regionIDs []string) context.Context {
+func includeUnassigned(r *http.Request) bool {
+	ctx := r.Context()
+	if v, ok := ctx.Value(includeUnassignedKey{}).(bool); ok {
+		return v
+	}
+	return false
+}
+
+// WithScope attaches the caller tenant, expanded visible org unit ids, and
+// the full-visibility flag to the context so device handlers can filter by
+// data scope.
+func WithScope(ctx context.Context, tenantID string, orgUnitIDs []string, includeUnassigned bool) context.Context {
 	ctx = context.WithValue(ctx, tenantKey{}, tenantID)
-	ctx = context.WithValue(ctx, regionKey{}, regionIDs)
+	ctx = context.WithValue(ctx, orgKey{}, orgUnitIDs)
+	ctx = context.WithValue(ctx, includeUnassignedKey{}, includeUnassigned)
 	return ctx
 }
 
 type tenantKey struct{}
-type regionKey struct{}
+type orgKey struct{}
+type includeUnassignedKey struct{}

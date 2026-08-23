@@ -20,7 +20,7 @@ cd /opt/new-vision
 
 echo "=== cleanup e2e rows ==="
 docker compose --env-file nvenv exec -T postgres psql -U new_vision -d new_vision <<'SQL'
-DELETE FROM user_region_scopes WHERE user_id IN (SELECT id FROM users WHERE username LIKE 'e2e-%');
+DELETE FROM user_org_scopes WHERE user_id IN (SELECT id FROM users WHERE username LIKE 'e2e-%');
 DELETE FROM user_roles WHERE user_id IN (SELECT id FROM users WHERE username LIKE 'e2e-%');
 DELETE FROM users WHERE username LIKE 'e2e-%';
 DELETE FROM tenants WHERE name LIKE 'e2e-%';

@@ -142,9 +142,10 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":         user,
-		"roles":        user.Roles,
-		"region_scopes": user.RegionIDs,
+		"user":        user,
+		"roles":       user.Roles,
+		"org_scopes":  user.OrgIDs,
+		"all_orgs":    user.AllOrgs,
 	})
 }
 

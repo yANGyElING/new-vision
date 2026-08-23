@@ -1,6 +1,7 @@
 package authz
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -10,14 +11,16 @@ import (
 
 // Middleware wraps the protected route tree. It authenticates the bearer
 // token (when present) and authorizes the mapped (obj, act) for each route.
+// Roles are loaded from the identity store on every request (no cache) so
+// role changes take effect immediately.
 type Middleware struct {
 	tokens    *authn.TokenManager
-	cache     *EnforcerCache
+	loader    RoleLoader
 	anonymous []string // exact path prefixes that skip authn entirely
 }
 
-func NewMiddleware(tokens *authn.TokenManager, cache *EnforcerCache, anonymous []string) *Middleware {
-	return &Middleware{tokens: tokens, cache: cache, anonymous: anonymous}
+func NewMiddleware(tokens *authn.TokenManager, loader RoleLoader, anonymous []string) *Middleware {
+	return &Middleware{tokens: tokens, loader: loader, anonymous: anonymous}
 }
 
 // With returns a handler that runs authn + authz for the given (obj, act).
@@ -32,12 +35,14 @@ func (m *Middleware) With(obj, act string, next http.HandlerFunc) http.HandlerFu
 			return
 		}
 		ctx := authn.WithPrincipal(r.Context(), p)
-		allowed, err := m.cache.Authorize(r.Context(), p, obj, act)
+		// Load live roles from the identity store.
+		userRoles, err := m.loader(ctx, p.TenantID)
 		if err != nil {
 			writeError(w, http.StatusServiceUnavailable, "service_unavailable", "authorization engine unavailable")
 			return
 		}
-		if !allowed {
+		roles := userRoles[p.UserID]
+		if !Allow(roles, obj, act) {
 			writeError(w, http.StatusForbidden, "forbidden", "insufficient permissions")
 			return
 		}
@@ -90,3 +95,8 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": code, "message": message}})
 }
+
+// RoleLoader reads the authoritative user-role assignments for a tenant from
+// the identity store. It is called on every authorization to make role
+// changes take effect immediately (no cache, no invalidation plumbing).
+type RoleLoader func(ctx context.Context, tenantID string) (map[string][]string, error)

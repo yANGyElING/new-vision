@@ -94,63 +94,185 @@ func (r *PostgresTenantRepository) SetStatus(ctx context.Context, id, status str
 	return t, err
 }
 
-type PostgresRegionRepository struct{ pool *pgxpool.Pool }
+type PostgresOrgUnitRepository struct{ pool *pgxpool.Pool }
 
-func NewPostgresRegionRepository(pool *pgxpool.Pool) *PostgresRegionRepository {
-	return &PostgresRegionRepository{pool: pool}
+func NewPostgresOrgUnitRepository(pool *pgxpool.Pool) *PostgresOrgUnitRepository {
+	return &PostgresOrgUnitRepository{pool: pool}
 }
 
-const regionColumns = `id, parent_id, name, created_at`
+const orgUnitColumns = `id, tenant_id, parent_id, name, created_at`
 
-func scanRegion(row pgx.Row) (Region, error) {
-	var r Region
+func scanOrgUnit(row pgx.Row) (OrgUnit, error) {
+	var o OrgUnit
 	var parentID *string
-	err := row.Scan(&r.ID, &parentID, &r.Name, &r.CreatedAt)
-	r.ParentID = parentID
-	return r, err
+	err := row.Scan(&o.ID, &o.TenantID, &parentID, &o.Name, &o.CreatedAt)
+	o.ParentID = parentID
+	return o, err
 }
 
-func (r *PostgresRegionRepository) Create(ctx context.Context, parentID, name string) (Region, error) {
-	var parent any
-	if parentID == "" {
-		parent = nil
-	} else {
-		parent = parentID
-	}
-	region, err := scanRegion(r.pool.QueryRow(ctx,
-		`INSERT INTO regions (parent_id, name) VALUES ($1, $2) RETURNING `+regionColumns, parent, name))
+func (r *PostgresOrgUnitRepository) Create(ctx context.Context, tenantID string, parentID *string, name string) (OrgUnit, error) {
+	orgUnit, err := scanOrgUnit(r.pool.QueryRow(ctx,
+		`INSERT INTO org_units (tenant_id, parent_id, name) VALUES ($1, $2, $3) RETURNING `+orgUnitColumns,
+		tenantID, parentID, name))
 	if err != nil {
 		if isUniqueViolation(err) {
-			return Region{}, ErrConflict
+			return OrgUnit{}, ErrConflict
 		}
-		return Region{}, err
+		return OrgUnit{}, err
 	}
-	return region, nil
+	return orgUnit, nil
 }
 
-func (r *PostgresRegionRepository) Get(ctx context.Context, id string) (Region, error) {
-	region, err := scanRegion(r.pool.QueryRow(ctx,
-		`SELECT `+regionColumns+` FROM regions WHERE id = $1`, id))
+func (r *PostgresOrgUnitRepository) Get(ctx context.Context, tenantID, id string) (OrgUnit, error) {
+	orgUnit, err := scanOrgUnit(r.pool.QueryRow(ctx,
+		`SELECT `+orgUnitColumns+` FROM org_units WHERE tenant_id = $1 AND id = $2`, tenantID, id))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Region{}, ErrNotFound
+		return OrgUnit{}, ErrNotFound
 	}
-	return region, err
+	return orgUnit, err
 }
 
-func (r *PostgresRegionRepository) UpdateName(ctx context.Context, id, name string) (Region, error) {
-	region, err := scanRegion(r.pool.QueryRow(ctx,
-		`UPDATE regions SET name = $2 WHERE id = $1 RETURNING `+regionColumns, id, name))
+func (r *PostgresOrgUnitRepository) UpdateName(ctx context.Context, tenantID, id, name string) (OrgUnit, error) {
+	orgUnit, err := scanOrgUnit(r.pool.QueryRow(ctx,
+		`UPDATE org_units SET name = $3 WHERE tenant_id = $1 AND id = $2 RETURNING `+orgUnitColumns,
+		tenantID, id, name))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Region{}, ErrNotFound
+		return OrgUnit{}, ErrNotFound
 	}
 	if err != nil && isUniqueViolation(err) {
-		return Region{}, ErrConflict
+		return OrgUnit{}, ErrConflict
 	}
-	return region, err
+	return orgUnit, err
 }
 
-func (r *PostgresRegionRepository) Delete(ctx context.Context, id string) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM regions WHERE id = $1`, id)
+// UpdateParent moves an org unit (with its whole subtree) to a new parent,
+// or to the root when newParentID is nil. It rejects:
+//   - moving a node under itself or one of its descendants (cycle),
+//   - a parent that belongs to a different tenant,
+//   - a sibling-name conflict at the target location.
+func (r *PostgresOrgUnitRepository) UpdateParent(ctx context.Context, tenantID, id string, newParentID *string) (OrgUnit, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return OrgUnit{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the moved node; fail fast when it does not exist in this tenant.
+	orgUnit, err := scanOrgUnit(tx.QueryRow(ctx,
+		`SELECT `+orgUnitColumns+` FROM org_units WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, tenantID, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrgUnit{}, ErrNotFound
+	}
+	if err != nil {
+		return OrgUnit{}, err
+	}
+
+	// Same parent is a no-op.
+	if (orgUnit.ParentID == nil && newParentID == nil) ||
+		(orgUnit.ParentID != nil && newParentID != nil && *orgUnit.ParentID == *newParentID) {
+		return orgUnit, tx.Commit(ctx)
+	}
+
+	if newParentID != nil {
+		// The new parent must exist in the same tenant.
+		parent, err := scanOrgUnit(tx.QueryRow(ctx,
+			`SELECT `+orgUnitColumns+` FROM org_units WHERE tenant_id = $1 AND id = $2`, tenantID, *newParentID))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return OrgUnit{}, ErrNotFound
+		}
+		if err != nil {
+			return OrgUnit{}, err
+		}
+		// Cycle guard: the new parent must not be the node itself or any
+		// descendant of it.
+		var ancestor bool
+		if err := tx.QueryRow(ctx, `
+			WITH RECURSIVE subtree AS (
+				SELECT id FROM org_units WHERE id = $1
+				UNION ALL
+				SELECT c.id FROM org_units c JOIN subtree s ON c.parent_id = s.id
+			)
+			SELECT EXISTS (SELECT 1 FROM subtree WHERE id = $2)`, id, *newParentID).Scan(&ancestor); err != nil {
+			return OrgUnit{}, err
+		}
+		if ancestor {
+			return OrgUnit{}, invalid("cannot move an org unit under itself or one of its descendants")
+		}
+		_ = parent
+	}
+
+	orgUnit, err = scanOrgUnit(tx.QueryRow(ctx,
+		`UPDATE org_units SET parent_id = $3 WHERE tenant_id = $1 AND id = $2 RETURNING `+orgUnitColumns,
+		tenantID, id, newParentID))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return OrgUnit{}, ErrConflict
+		}
+		return OrgUnit{}, err
+	}
+	return orgUnit, tx.Commit(ctx)
+}
+
+// UpdateNameAndParent renames an org unit and moves it to a new parent in a
+// single transaction so a failed move (cycle, cross-tenant parent, sibling
+// conflict) never leaves a half-applied rename.
+func (r *PostgresOrgUnitRepository) UpdateNameAndParent(ctx context.Context, tenantID, id, name string, newParentID *string) (OrgUnit, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return OrgUnit{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the moved node; fail fast when it does not exist in this tenant.
+	orgUnit, err := scanOrgUnit(tx.QueryRow(ctx,
+		`SELECT `+orgUnitColumns+` FROM org_units WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, tenantID, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrgUnit{}, ErrNotFound
+	}
+	if err != nil {
+		return OrgUnit{}, err
+	}
+
+	if newParentID != nil {
+		// The new parent must exist in the same tenant.
+		if _, err := scanOrgUnit(tx.QueryRow(ctx,
+			`SELECT `+orgUnitColumns+` FROM org_units WHERE tenant_id = $1 AND id = $2`, tenantID, *newParentID)); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return OrgUnit{}, ErrNotFound
+			}
+			return OrgUnit{}, err
+		}
+		// Cycle guard: the new parent must not be the node itself or any
+		// descendant of it.
+		var ancestor bool
+		if err := tx.QueryRow(ctx, `
+			WITH RECURSIVE subtree AS (
+				SELECT id FROM org_units WHERE id = $1
+				UNION ALL
+				SELECT c.id FROM org_units c JOIN subtree s ON c.parent_id = s.id
+			)
+			SELECT EXISTS (SELECT 1 FROM subtree WHERE id = $2)`, id, *newParentID).Scan(&ancestor); err != nil {
+			return OrgUnit{}, err
+		}
+		if ancestor {
+			return OrgUnit{}, invalid("cannot move an org unit under itself or one of its descendants")
+		}
+	}
+
+	orgUnit, err = scanOrgUnit(tx.QueryRow(ctx,
+		`UPDATE org_units SET name = $3, parent_id = $4 WHERE tenant_id = $1 AND id = $2 RETURNING `+orgUnitColumns,
+		tenantID, id, name, newParentID))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return OrgUnit{}, ErrConflict
+		}
+		return OrgUnit{}, err
+	}
+	return orgUnit, tx.Commit(ctx)
+}
+
+func (r *PostgresOrgUnitRepository) Delete(ctx context.Context, tenantID, id string) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM org_units WHERE tenant_id = $1 AND id = $2`, tenantID, id)
 	if err != nil {
 		if isForeignKeyViolation(err) {
 			return ErrInUse
@@ -163,21 +285,23 @@ func (r *PostgresRegionRepository) Delete(ctx context.Context, id string) error 
 	return nil
 }
 
-// Tree loads all regions once and assembles the forest in memory.
-func (r *PostgresRegionRepository) Tree(ctx context.Context) ([]*Region, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+regionColumns+` FROM regions ORDER BY name`)
+// Tree loads all org units of one tenant once and assembles the forest in
+// memory.
+func (r *PostgresOrgUnitRepository) Tree(ctx context.Context, tenantID string) ([]*OrgUnit, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+orgUnitColumns+` FROM org_units WHERE tenant_id = $1 ORDER BY name`, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	byID := map[string]*Region{}
-	var roots []*Region
+	byID := map[string]*OrgUnit{}
+	var roots []*OrgUnit
 	for rows.Next() {
-		region, err := scanRegion(rows)
+		orgUnit, err := scanOrgUnit(rows)
 		if err != nil {
 			return nil, err
 		}
-		node := &Region{ID: region.ID, ParentID: region.ParentID, Name: region.Name, CreatedAt: region.CreatedAt}
+		node := &OrgUnit{ID: orgUnit.ID, TenantID: orgUnit.TenantID, ParentID: orgUnit.ParentID, Name: orgUnit.Name, CreatedAt: orgUnit.CreatedAt}
 		byID[node.ID] = node
 		if node.ParentID == nil {
 			roots = append(roots, node)
@@ -196,15 +320,21 @@ func (r *PostgresRegionRepository) Tree(ctx context.Context) ([]*Region, error) 
 	return roots, nil
 }
 
-// SubtreeIDs returns the region id and all descendant ids via recursive CTE.
-func (r *PostgresRegionRepository) SubtreeIDs(ctx context.Context, regionID string) ([]string, error) {
+// SubtreeIDs returns all org unit ids in the subtrees rooted at the given
+// ids via a single recursive CTE (the anchors plus every descendant).
+// It returns an empty slice when inputs are empty; unknown anchor ids are
+// silently ignored (callers resolve visibility elsewhere).
+func (r *PostgresOrgUnitRepository) SubtreeIDs(ctx context.Context, orgUnitIDs []string) ([]string, error) {
+	if len(orgUnitIDs) == 0 {
+		return []string{}, nil
+	}
 	rows, err := r.pool.Query(ctx, `
 		WITH RECURSIVE subtree AS (
-			SELECT id FROM regions WHERE id = $1
+			SELECT id FROM org_units WHERE id = ANY($1)
 			UNION ALL
-			SELECT c.id FROM regions c JOIN subtree s ON c.parent_id = s.id
+			SELECT c.id FROM org_units c JOIN subtree s ON c.parent_id = s.id
 		)
-		SELECT id FROM subtree`, regionID)
+		SELECT id FROM subtree`, orgUnitIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -217,9 +347,6 @@ func (r *PostgresRegionRepository) SubtreeIDs(ctx context.Context, regionID stri
 		}
 		ids = append(ids, id)
 	}
-	if len(ids) == 0 {
-		return nil, ErrNotFound
-	}
 	return ids, rows.Err()
 }
 
@@ -229,11 +356,11 @@ func NewPostgresUserRepository(pool *pgxpool.Pool) *PostgresUserRepository {
 	return &PostgresUserRepository{pool: pool}
 }
 
-const userColumns = `id, tenant_id, username, password_hash, display_name, status, created_at, updated_at`
+const userColumns = `id, tenant_id, username, password_hash, display_name, status, all_orgs, created_at, updated_at`
 
 func scanUser(row pgx.Row) (User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.TenantID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.Status, &u.CreatedAt, &u.UpdatedAt)
+	err := row.Scan(&u.ID, &u.TenantID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.Status, &u.AllOrgs, &u.CreatedAt, &u.UpdatedAt)
 	return u, err
 }
 
@@ -254,8 +381,8 @@ func (r *PostgresUserRepository) loadRoles(ctx context.Context, userID string) (
 	return roles, rows.Err()
 }
 
-func (r *PostgresUserRepository) loadRegionScopes(ctx context.Context, userID string) ([]string, error) {
-	rows, err := r.pool.Query(ctx, `SELECT region_id FROM user_region_scopes WHERE user_id = $1 ORDER BY region_id`, userID)
+func (r *PostgresUserRepository) loadOrgScopes(ctx context.Context, userID string) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `SELECT org_unit_id FROM user_org_scopes WHERE user_id = $1 ORDER BY org_unit_id`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -276,12 +403,12 @@ func (r *PostgresUserRepository) hydrate(ctx context.Context, u User) (User, err
 	if err != nil {
 		return User{}, err
 	}
-	regionIDs, err := r.loadRegionScopes(ctx, u.ID)
+	orgIDs, err := r.loadOrgScopes(ctx, u.ID)
 	if err != nil {
 		return User{}, err
 	}
 	u.Roles = roles
-	u.RegionIDs = regionIDs
+	u.OrgIDs = orgIDs
 	return u, nil
 }
 
@@ -292,9 +419,9 @@ func (r *PostgresUserRepository) Create(ctx context.Context, in CreateUserInput,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	u, err := scanUser(tx.QueryRow(ctx,
-		`INSERT INTO users (tenant_id, username, password_hash, display_name)
-		 VALUES ($1, $2, $3, $4) RETURNING `+userColumns,
-		in.TenantID, in.Username, passwordHash, in.DisplayName))
+		`INSERT INTO users (tenant_id, username, password_hash, display_name, all_orgs)
+		 VALUES ($1, $2, $3, $4, $5) RETURNING `+userColumns,
+		in.TenantID, in.Username, passwordHash, in.DisplayName, in.AllOrgs))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return User{}, ErrConflict
@@ -304,7 +431,7 @@ func (r *PostgresUserRepository) Create(ctx context.Context, in CreateUserInput,
 	if err := replaceRoles(ctx, tx, u.ID, in.Roles); err != nil {
 		return User{}, err
 	}
-	if err := replaceRegionScopes(ctx, tx, u.ID, in.RegionIDs); err != nil {
+	if err := replaceOrgScopes(ctx, tx, u.ID, in.OrgIDs); err != nil {
 		return User{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -370,20 +497,24 @@ func (r *PostgresUserRepository) Update(ctx context.Context, tenantID, id string
 		return User{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var displayName, status any
+	var displayName, status, allOrgs any
 	if in.DisplayName != nil {
 		displayName = *in.DisplayName
 	}
 	if in.Status != nil {
 		status = *in.Status
 	}
+	if in.AllOrgs != nil {
+		allOrgs = *in.AllOrgs
+	}
 	u, err := scanUser(tx.QueryRow(ctx,
 		`UPDATE users SET
 			display_name = COALESCE($3, display_name),
 			status = COALESCE($4, status),
+			all_orgs = COALESCE($5, all_orgs),
 			updated_at = now()
 		 WHERE tenant_id = $1 AND id = $2 RETURNING `+userColumns,
-		tenantID, id, displayName, status))
+		tenantID, id, displayName, status, allOrgs))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
@@ -395,8 +526,8 @@ func (r *PostgresUserRepository) Update(ctx context.Context, tenantID, id string
 			return User{}, err
 		}
 	}
-	if in.RegionIDs != nil {
-		if err := replaceRegionScopes(ctx, tx, u.ID, in.RegionIDs); err != nil {
+	if in.OrgIDs != nil {
+		if err := replaceOrgScopes(ctx, tx, u.ID, in.OrgIDs); err != nil {
 			return User{}, err
 		}
 	}
@@ -448,14 +579,14 @@ func replaceRoles(ctx context.Context, tx execer, userID string, roles []string)
 	return nil
 }
 
-func replaceRegionScopes(ctx context.Context, tx execer, userID string, regionIDs []string) error {
-	if _, err := tx.Exec(ctx, `DELETE FROM user_region_scopes WHERE user_id = $1`, userID); err != nil {
+func replaceOrgScopes(ctx context.Context, tx execer, userID string, orgUnitIDs []string) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM user_org_scopes WHERE user_id = $1`, userID); err != nil {
 		return err
 	}
-	for _, regionID := range regionIDs {
+	for _, orgUnitID := range orgUnitIDs {
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO user_region_scopes (user_id, region_id) VALUES ($1, $2) ON CONFLICT (user_id, region_id) DO NOTHING`,
-			userID, regionID); err != nil {
+			`INSERT INTO user_org_scopes (user_id, org_unit_id) VALUES ($1, $2) ON CONFLICT (user_id, org_unit_id) DO NOTHING`,
+			userID, orgUnitID); err != nil {
 			return err
 		}
 	}

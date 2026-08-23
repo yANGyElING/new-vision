@@ -6,8 +6,9 @@ export type User = {
   username: string
   display_name: string
   status: string
+  all_orgs: boolean
   roles: string[]
-  region_ids: string[]
+  org_ids: string[]
 }
 
 export type LoginResponse = {
@@ -30,7 +31,7 @@ export async function loginAndStore(tenant: string, username: string, password: 
   return result.user
 }
 
-export function me(): Promise<{ user: User; roles: string[]; region_scopes: string[] }> {
+export function me(): Promise<{ user: User; roles: string[]; org_scopes: string[]; all_orgs: boolean }> {
   return request('/api/v1/auth/me')
 }
 

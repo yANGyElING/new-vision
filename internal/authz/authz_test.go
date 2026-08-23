@@ -1,69 +1,53 @@
 package authz
 
 import (
-	"context"
 	"testing"
-
-	"github.com/new-vision-lab/new-vision/internal/authn"
 )
 
-func TestAuthorizeLazyLoadUsesRoleLoader(t *testing.T) {
-	// Regression: a cache miss must build the enforcer with the tenant's
-	// live user roles. Building an enforcer with no user bindings (as
-	// happened before the loader existed) denied every request, including
-	// the seeded node_admin.
-	roles := map[string][]string{"user-1": {"node_admin"}}
-	cache := NewEnforcerCache(func(ctx context.Context, tenantID string) (map[string][]string, error) {
-		return roles, nil
-	})
-
-	p := &authn.Principal{UserID: "user-1", TenantID: "tenant-1"}
-	ok, err := cache.Authorize(context.Background(), p, ObjIdentity, ActManage)
-	if err != nil {
-		t.Fatalf("authorize: %v", err)
+func TestAllowMatrix(t *testing.T) {
+	cases := []struct {
+		roles []string
+		obj   string
+		act   string
+		want  bool
+	}{
+		// node_admin: everything
+		{[]string{"node_admin"}, ObjIdentity, ActManage, true},
+		{[]string{"node_admin"}, ObjOrgUnit, ActManage, true},
+		{[]string{"node_admin"}, ObjDevice, ActDelete, true},
+		{[]string{"node_admin"}, ObjTestSIP, ActRegister, true},
+		// tenant_admin: org_unit manage (own tenant), device full, no identity, no test:sip
+		{[]string{"tenant_admin"}, ObjOrgUnit, ActManage, true},
+		{[]string{"tenant_admin"}, ObjDevice, ActCreate, true},
+		{[]string{"tenant_admin"}, ObjDevice, ActDelete, true},
+		{[]string{"tenant_admin"}, ObjIdentity, ActManage, false},
+		{[]string{"tenant_admin"}, ObjTestSIP, ActRegister, false},
+		// operator: device view/enable, access view/events
+		{[]string{"operator"}, ObjDevice, ActView, true},
+		{[]string{"operator"}, ObjDevice, ActEnable, true},
+		{[]string{"operator"}, ObjDevice, ActDelete, false},
+		{[]string{"operator"}, ObjAccess, ActEvents, true},
+		{[]string{"operator"}, ObjOrgUnit, ActManage, false},
+		// viewer: device/access view only
+		{[]string{"viewer"}, ObjDevice, ActView, true},
+		{[]string{"viewer"}, ObjDevice, ActEnable, false},
+		{[]string{"viewer"}, ObjAccess, ActView, true},
+		// unknown role / empty roles
+		{[]string{"unknown"}, ObjDevice, ActView, false},
+		{[]string{}, ObjDevice, ActView, false},
 	}
-	if !ok {
-		t.Fatal("node_admin should be allowed identity:manage via lazy-loaded roles")
-	}
-}
-
-func TestAuthorizeUnknownUserDenied(t *testing.T) {
-	cache := NewEnforcerCache(func(ctx context.Context, tenantID string) (map[string][]string, error) {
-		return map[string][]string{"user-1": {"viewer"}}, nil
-	})
-	p := &authn.Principal{UserID: "user-2", TenantID: "tenant-1"}
-	ok, err := cache.Authorize(context.Background(), p, ObjDevice, ActView)
-	if err != nil {
-		t.Fatalf("authorize: %v", err)
-	}
-	if ok {
-		t.Fatal("user without roles must be denied")
-	}
-}
-
-func TestInvalidateReloadsFromLoader(t *testing.T) {
-	roles := map[string][]string{"user-1": {"viewer"}}
-	cache := NewEnforcerCache(func(ctx context.Context, tenantID string) (map[string][]string, error) {
-		return roles, nil
-	})
-	p := &authn.Principal{UserID: "user-1", TenantID: "tenant-1"}
-
-	if ok, _ := cache.Authorize(context.Background(), p, ObjDevice, ActCreate); ok {
-		t.Fatal("viewer must not create devices")
-	}
-	// Role assignment changes in the store: Invalidate must make the next
-	// request pick the new roles up through the loader.
-	roles["user-1"] = []string{"tenant_admin"}
-	cache.Invalidate("tenant-1")
-	if ok, err := cache.Authorize(context.Background(), p, ObjDevice, ActCreate); err != nil || !ok {
-		t.Fatalf("tenant_admin should create devices after invalidate: ok=%v err=%v", ok, err)
+	for _, c := range cases {
+		if got := Allow(c.roles, c.obj, c.act); got != c.want {
+			t.Errorf("Allow(%v, %q, %q) = %v, want %v", c.roles, c.obj, c.act, got, c.want)
+		}
 	}
 }
 
-func TestAuthorizeNilPrincipalDenied(t *testing.T) {
-	cache := NewEnforcerCache(nil)
-	ok, err := cache.Authorize(context.Background(), nil, ObjDevice, ActView)
-	if err != nil || ok {
-		t.Fatalf("nil principal must be denied without error: ok=%v err=%v", ok, err)
+func TestAuthorize(t *testing.T) {
+	if !Authorize([]string{"node_admin"}, ObjOrgUnit, ActManage) {
+		t.Fatal("node_admin should manage org units")
+	}
+	if Authorize([]string{"viewer"}, ObjOrgUnit, ActManage) {
+		t.Fatal("viewer must not manage org units")
 	}
 }

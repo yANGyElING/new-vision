@@ -17,7 +17,6 @@ type Principal struct {
 	TenantID   string
 	Username   string
 	Roles      []string
-	RegionIDs  []string
 	// DelegatedIdentity is reserved for future Center-granted delegation.
 	// It is never populated by local JWT login in this phase.
 	DelegatedIdentity *DelegatedIdentity

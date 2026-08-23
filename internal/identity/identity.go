@@ -15,12 +15,17 @@ type Tenant struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-type Region struct {
+// OrgUnit is a node in the per-tenant organization tree. Top-level nodes
+// have a nil ParentID; the tree starts empty (no seed root) and is built
+// by users. It is the data-scope anchor: users get scopes pointing at org
+// units (subtree expansion), devices optionally point at an org unit.
+type OrgUnit struct {
 	ID        string    `json:"id"`
+	TenantID  string    `json:"tenant_id"`
 	ParentID  *string   `json:"parent_id,omitempty"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
-	Children  []*Region `json:"children,omitempty"`
+	Children  []*OrgUnit `json:"children,omitempty"`
 }
 
 type User struct {
@@ -30,8 +35,9 @@ type User struct {
 	DisplayName  string    `json:"display_name"`
 	PasswordHash string    `json:"-"`
 	Status       string    `json:"status"`
+	AllOrgs      bool      `json:"all_orgs"`
 	Roles        []string  `json:"roles"`
-	RegionIDs    []string  `json:"region_ids"`
+	OrgIDs       []string  `json:"org_ids"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -49,15 +55,16 @@ func (in CreateTenantInput) Validate() error {
 
 // CreateUserInput creates a user in the caller's tenant by default. A
 // node_admin may set TenantID to create a user in another tenant (enforced
-// by the handler). Roles and RegionIDs may be empty: a user can be created
-// first and have roles/region scopes assigned later via Update.
+// by the handler). Roles, OrgIDs and AllOrgs may be empty: a user can be
+// created first and have roles/org scopes assigned later via Update.
 type CreateUserInput struct {
 	TenantID    string   `json:"tenant_id"`
 	Username    string   `json:"username"`
 	Password    string   `json:"password"`
 	DisplayName string   `json:"display_name"`
+	AllOrgs     bool     `json:"all_orgs"`
 	Roles       []string `json:"roles"`
-	RegionIDs   []string `json:"region_ids"`
+	OrgIDs      []string `json:"org_ids"`
 }
 
 func (in CreateUserInput) Validate() error {
@@ -81,8 +88,9 @@ func (in CreateUserInput) Validate() error {
 type UpdateUserInput struct {
 	DisplayName *string  `json:"display_name"`
 	Status      *string  `json:"status"`
+	AllOrgs     *bool    `json:"all_orgs"`
 	Roles       []string `json:"roles"`
-	RegionIDs   []string `json:"region_ids"`
+	OrgIDs      []string `json:"org_ids"`
 }
 
 const (
@@ -123,13 +131,15 @@ type TenantRepository interface {
 	SetStatus(context.Context, string, string) (Tenant, error)
 }
 
-type RegionRepository interface {
-	Create(context.Context, string, string) (Region, error)
-	Tree(context.Context) ([]*Region, error)
-	Get(context.Context, string) (Region, error)
-	UpdateName(context.Context, string, string) (Region, error)
-	Delete(context.Context, string) error
-	SubtreeIDs(context.Context, string) ([]string, error)
+type OrgUnitRepository interface {
+	Create(context.Context, string, *string, string) (OrgUnit, error)
+	Tree(context.Context, string) ([]*OrgUnit, error)
+	Get(context.Context, string, string) (OrgUnit, error)
+	UpdateName(context.Context, string, string, string) (OrgUnit, error)
+	UpdateParent(context.Context, string, string, *string) (OrgUnit, error)
+	UpdateNameAndParent(context.Context, string, string, string, *string) (OrgUnit, error)
+	Delete(context.Context, string, string) error
+	SubtreeIDs(context.Context, []string) ([]string, error)
 }
 
 type UserRepository interface {
@@ -144,14 +154,14 @@ type UserRepository interface {
 
 type Store struct {
 	Tenants TenantRepository
-	Regions RegionRepository
+	OrgUnits OrgUnitRepository
 	Users   UserRepository
 }
 
 func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{
 		Tenants: NewPostgresTenantRepository(pool),
-		Regions: NewPostgresRegionRepository(pool),
+		OrgUnits: NewPostgresOrgUnitRepository(pool),
 		Users:   NewPostgresUserRepository(pool),
 	}
 }

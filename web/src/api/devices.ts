@@ -12,6 +12,8 @@ export type RuntimeState = {
 
 export type Device = {
   id: string
+  tenant_id: string
+  org_unit_id?: string | null
   device_access_id: string
   device_name: string
   manufacturer: string
@@ -51,7 +53,7 @@ export function deviceTypeLabel(code: string): string {
 }
 
 export type CreateDeviceInput = {
-  region_id: string
+  org_unit_id?: string
   center_code: string
   device_type: string
   device_name: string
@@ -71,6 +73,10 @@ export function setDeviceEnabled(id: string, enabled: boolean): Promise<Device> 
 
 export function updateDeviceMeta(id: string, data: { device_name?: string; manufacturer?: string }): Promise<Device> {
   return request(`/api/v1/devices/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+}
+
+export function updateDeviceOrg(id: string, orgUnitID: string | null): Promise<Device> {
+  return request(`/api/v1/devices/${id}`, { method: 'PATCH', body: JSON.stringify({ org_unit_id: orgUnitID ?? '' }) })
 }
 
 export function deleteDevice(id: string): Promise<void> {

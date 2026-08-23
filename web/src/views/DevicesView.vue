@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   Activity, AlertTriangle, Check, ChevronLeft, ChevronRight, Cpu, Database,
-  Edit3, Eye, HardDrive, ListPlus, Monitor, Pause, Play, Plus, Radio, RefreshCw,
+  Edit3, Eye, Folder, FolderOpen, HardDrive, ListPlus, Monitor, Network, Pause, Play, Plus, Radio, RefreshCw,
   Search, Server, ShieldCheck, Trash2, WifiOff, X, Zap,
 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
@@ -10,9 +10,10 @@ import { useDevice } from '@/composables/useDevice'
 import { fetchHealth, type HealthState } from '@/api/health'
 import { me } from '@/api/auth'
 import {
-  listDevices, createDevice, setDeviceEnabled, updateDeviceMeta, deleteDevice,
+  listDevices, createDevice, setDeviceEnabled, updateDeviceMeta, updateDeviceOrg, deleteDevice,
   previewAccessID, deviceTypeLabel, DEVICE_TYPES, type Device,
 } from '@/api/devices'
+import { listOrgUnits, type OrgUnit } from '@/api/identity'
 
 // ---------- health band ----------
 const health = ref<HealthState>({ kind: 'loading' })
@@ -70,6 +71,8 @@ const search = ref('')
 const typeFilter = ref('')
 const syncFilter = ref('')
 const runtimeFilter = ref('')
+const orgFilter = ref<string | null>(null) // null = all visible (incl. unassigned)
+const orgFilterTree = ref<OrgUnit[]>([])
 const page = ref(1)
 const pageSize = 10
 
@@ -93,11 +96,59 @@ async function loadDevices() {
   }
 }
 
+// Org tree (visible scope) for the folder-style sidebar + org filter.
+// Selected org id = show devices in that subtree; null = all visible.
+type FlatOrg = { org: OrgUnit; depth: number; path: string }
+const flatOrgTree = computed<FlatOrg[]>(() => {
+  const out: FlatOrg[] = []
+  const walk = (nodes: OrgUnit[], depth: number, prefix: string) => {
+    for (const n of nodes) {
+      const path = prefix ? `${prefix} / ${n.name}` : n.name
+      out.push({ org: n, depth, path })
+      if (n.children?.length) walk(n.children, depth + 1, path)
+    }
+  }
+  walk(orgFilterTree.value, 0, '')
+  return out
+})
+
+// ids in the selected org subtree
+function subtreeIDs(rootID: string): Set<string> {
+  const ids = new Set<string>()
+  const walk = (nodes: OrgUnit[]) => {
+    for (const n of nodes) {
+      ids.add(n.id)
+      if (n.children?.length) walk(n.children)
+    }
+  }
+  const node = flatOrgTree.value.find((f) => f.org.id === rootID)
+  walk(node ? [node.org] : [])
+  return ids
+}
+
+// device count in an org subtree (sidebar badge)
+function orgCount(rootID: string): number {
+  const ids = subtreeIDs(rootID)
+  return devices.value.filter((d) => d.org_unit_id && ids.has(d.org_unit_id)).length
+}
+
+async function loadOrgTree() {
+  try {
+    orgFilterTree.value = await listOrgUnits()
+  } catch {
+    orgFilterTree.value = []
+  }
+}
+
 const filteredDevices = computed(() => {
   const q = search.value.trim().toLowerCase()
   let list = devices.value
   if (q) {
     list = list.filter((d) => d.device_access_id.toLowerCase().includes(q) || (d.device_name || '').toLowerCase().includes(q))
+  }
+  if (orgFilter.value) {
+    const ids = subtreeIDs(orgFilter.value)
+    list = list.filter((d) => d.org_unit_id && ids.has(d.org_unit_id))
   }
   if (typeFilter.value) list = list.filter((d) => d.device_type === typeFilter.value)
   if (syncFilter.value) list = list.filter((d) => d.access_sync_status === syncFilter.value)
@@ -125,13 +176,13 @@ const createOpen = ref(false)
 const typePickerOpen = ref(false)
 const creating = ref(false)
 const createError = ref('')
-const regionScopes = ref<string[]>([])
+const orgTree = ref<OrgUnit[]>([])
 const createForm = ref<{
   device_type: string; center_code: string; device_name: string; manufacturer: string
-  sip_realm: string; password: string; enabled: boolean; region_id: string
+  sip_realm: string; password: string; enabled: boolean; org_unit_id: string
 }>({
   device_type: DEVICE_TYPES[0].code, center_code: '34020000', device_name: '', manufacturer: '',
-  sip_realm: '3402000000', password: '', enabled: true, region_id: '',
+  sip_realm: '3402000000', password: '', enabled: true, org_unit_id: '',
 })
 
 const manufacturerOptions = ref(['海康威视', '大华', '宇视', '华为', '天地伟业', '科达', '其他'])
@@ -184,14 +235,10 @@ function closeCreate() { createOpen.value = false; createError.value = '' }
 
 async function submitCreate() {
   createError.value = ''
-  if (!createForm.value.region_id) {
-    createError.value = '请选择区域'
-    return
-  }
   creating.value = true
   try {
     const device = await createDevice({
-      region_id: createForm.value.region_id,
+      org_unit_id: createForm.value.org_unit_id || undefined,
       center_code: createForm.value.center_code,
       device_type: createForm.value.device_type,
       device_name: createForm.value.device_name.trim(),
@@ -215,13 +262,17 @@ async function submitCreate() {
 
 // ---------- edit ----------
 const editingDevice = ref<Device | null>(null)
-const editForm = ref({ device_name: '', manufacturer: '' })
+const editForm = ref({ device_name: '', manufacturer: '', org_unit_id: '' })
 const savingEdit = ref(false)
 const editError = ref('')
 
 function openEdit(device: Device) {
   editingDevice.value = device
-  editForm.value = { device_name: device.device_name, manufacturer: device.manufacturer }
+  editForm.value = {
+    device_name: device.device_name,
+    manufacturer: device.manufacturer,
+    org_unit_id: device.org_unit_id ?? '',
+  }
   editError.value = ''
 }
 function closeEdit() { editingDevice.value = null; editError.value = '' }
@@ -230,6 +281,9 @@ async function submitEdit() {
   editError.value = ''
   savingEdit.value = true
   try {
+    if (editForm.value.org_unit_id !== (editingDevice.value.org_unit_id ?? '')) {
+      await updateDeviceOrg(editingDevice.value.id, editForm.value.org_unit_id || null)
+    }
     await updateDeviceMeta(editingDevice.value.id, {
       device_name: editForm.value.device_name.trim(),
       manufacturer: editForm.value.manufacturer.trim(),
@@ -280,6 +334,9 @@ async function removeDevice(device: Device) {
 function runtimeState(device: Device): string {
   return device.runtime?.state ?? 'offline'
 }
+function orgNameOf(id: string): string {
+  return flatOrgTree.value.find((f) => f.org.id === id)?.org.name ?? id
+}
 function runtimeLabel(device: Device): string {
   switch (runtimeState(device)) {
     case 'online': return '在线'
@@ -303,9 +360,8 @@ onMounted(() => {
   void loadDevices()
   void refreshHealth()
   void me().then((info) => {
-    regionScopes.value = info.region_scopes ?? []
     nodeAdmin.value = (info.roles ?? []).includes('node_admin')
-    if (regionScopes.value.length > 0) createForm.value.region_id = regionScopes.value[0]
+    return loadOrgTree()
   }).catch(() => {})
   const timer = window.setInterval(refreshHealth, 30000)
   onUnmounted(() => {
@@ -384,6 +440,36 @@ onMounted(() => {
           <strong class="prod-stat-value">{{ stats.pending }}</strong>
         </div>
       </div>
+
+      <!-- folder-style org sidebar + device list -->
+      <div class="prod-fold">
+        <aside class="prod-fold-tree" aria-label="组织架构">
+          <div class="prod-fold-tree-head">
+            <span class="prod-fold-tree-title"><Network :size="14" />组织</span>
+            <button class="prod-fold-tree-clear" type="button" :disabled="orgFilter === null" title="显示全部" aria-label="显示全部" @click="orgFilter = null; resetPage()"><X :size="13" /></button>
+          </div>
+          <div class="prod-fold-tree-body">
+            <button class="prod-fold-node" :class="{ active: orgFilter === null }" type="button" @click="orgFilter = null; resetPage()">
+              <span class="prod-fold-node-icon"><FolderOpen :size="13" /></span>
+              <span class="prod-fold-node-name">全部设备</span>
+              <span class="prod-fold-node-count mono">{{ devices.length }}</span>
+            </button>
+            <button
+              v-for="f in flatOrgTree" :key="f.org.id"
+              class="prod-fold-node" :class="{ active: orgFilter === f.org.id }"
+              type="button" :style="{ paddingLeft: `${f.depth * 16 + 10}px` }"
+              :title="f.path" @click="orgFilter = f.org.id; resetPage()"
+            >
+              <span class="prod-fold-node-icon"><Folder :size="13" /></span>
+              <span class="prod-fold-node-name">{{ f.org.name }}</span>
+              <span class="prod-fold-node-count mono">{{ orgCount(f.org.id) }}</span>
+            </button>
+            <button v-if="flatOrgTree.length === 0" class="prod-fold-node prod-fold-node-empty" type="button" @click="orgFilter = null; resetPage()">
+              <span class="prod-fold-node-name">还没有组织</span>
+            </button>
+          </div>
+        </aside>
+        <div class="prod-fold-main">
 
       <!-- search & filter card -->
       <div class="prod-toolbar-card">
@@ -556,6 +642,8 @@ onMounted(() => {
           <button class="prod-page-btn" type="button" :disabled="page >= totalPages" aria-label="下一页" @click="page++"><ChevronRight :size="15" /></button>
         </div>
       </div>
+        </div>
+      </div>
 
       <!-- type picker -->
       <Teleport to="body">
@@ -590,11 +678,12 @@ onMounted(() => {
               <form class="prod-form" @submit.prevent="submitCreate">
                 <div class="prod-form-grid">
                   <div class="prod-field prod-field-full">
-                    <label for="prod-create-region">区域</label>
-                    <select id="prod-create-region" v-model="createForm.region_id" class="prod-select prod-select-full" required>
-                      <option v-for="rid in regionScopes" :key="rid" :value="rid">{{ rid }}</option>
+                    <label for="prod-create-org">归属组织</label>
+                    <select id="prod-create-org" v-model="createForm.org_unit_id" class="prod-select prod-select-full">
+                      <option value="">未分配（稍后归位）</option>
+                      <option v-for="f in flatOrgTree" :key="f.org.id" :value="f.org.id">{{ f.path }}</option>
                     </select>
-                    <span v-if="regionScopes.length === 0" class="prod-meta-hint">当前账号没有可用区域范围，请联系管理员分配。</span>
+                    <span class="prod-meta-hint">不选则设备创建后暂不归属任何组织，仅管理员可见。</span>
                   </div>
                   <div class="prod-field">
                     <label for="prod-create-name">设备名称</label>
@@ -670,6 +759,14 @@ onMounted(() => {
                   <div class="prod-field prod-field-full">
                     <label for="prod-edit-manufacturer">厂商</label>
                     <input id="prod-edit-manufacturer" v-model="editForm.manufacturer" required maxlength="255" />
+                  </div>
+                  <div class="prod-field prod-field-full">
+                    <label for="prod-edit-org">归属组织</label>
+                    <select id="prod-edit-org" v-model="editForm.org_unit_id" class="prod-select prod-select-full">
+                      <option value="">未分配（仅管理员可见）</option>
+                      <option v-for="f in flatOrgTree" :key="f.org.id" :value="f.org.id">{{ f.path }}</option>
+                    </select>
+                    <span class="prod-meta-hint">变更归属后，设备按新组织进入对应可见范围。</span>
                   </div>
                   <p class="prod-field-full prod-meta-hint">接入 ID、类型与 SIP Realm 不可修改。</p>
                 </div>
@@ -956,10 +1053,30 @@ onMounted(() => {
 .mono { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; font-variant-numeric: tabular-nums; }
 .spinning { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* ---------- folder-style org sidebar ---------- */
+.prod-fold { display: grid; grid-template-columns: 230px 1fr; gap: 16px; align-items: start; margin-bottom: 16px; }
+.prod-fold-tree { background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); overflow: hidden; position: sticky; top: 132px; max-height: calc(100vh - 160px); display: flex; flex-direction: column; }
+.prod-fold-tree-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid #F2F2F7; }
+.prod-fold-tree-title { display: inline-flex; align-items: center; gap: 7px; color: #8E8E93; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+.prod-fold-tree-clear { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; color: #8E8E93; background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
+.prod-fold-tree-clear:hover:not(:disabled) { background: #F2F2F7; color: #1C1C1E; }
+.prod-fold-tree-clear:disabled { opacity: .35; cursor: default; }
+.prod-fold-tree-body { overflow-y: auto; padding: 6px; }
+.prod-fold-node { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px 10px; color: #3A3A3C; background: transparent; border: 0; border-radius: 8px; font: inherit; font-size: 13px; text-align: left; cursor: pointer; box-sizing: border-box; transition: background .15s, color .15s; }
+.prod-fold-node:hover { background: #F2F2F7; }
+.prod-fold-node.active { background: #1C1C1E; color: #fff; }
+.prod-fold-node-icon { color: #C7C7CC; flex-shrink: 0; }
+.prod-fold-node.active .prod-fold-node-icon { color: #fff; }
+.prod-fold-node-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prod-fold-node-count { color: #8E8E93; font-size: 11px; font-variant-numeric: tabular-nums; }
+.prod-fold-node.active .prod-fold-node-count { color: rgba(255,255,255,.7); }
+.prod-fold-node-empty { color: #8E8E93; cursor: default; }
+.prod-fold-node:focus-visible { outline: 2px solid #007AFF; outline-offset: 1px; }
+@media (max-width: 900px) { .prod-fold { grid-template-columns: 1fr; } .prod-fold-tree { position: static; max-height: 220px; } }
 /* ---------- reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {
   .sk, .spinning { animation: none; }
-  .prod-trow, .prod-button, .prod-act, .prod-icon, .prod-nav-link, .prod-type-card, .prod-search input, .prod-select, .prod-pill, .prod-refresh, .prod-page-btn, .prod-field input { transition: none; }
+  .prod-trow, .prod-button, .prod-act, .prod-icon, .prod-nav-link, .prod-type-card, .prod-search input, .prod-select, .prod-pill, .prod-refresh, .prod-page-btn, .prod-field input, .prod-fold-node { transition: none; }
   .modal-enter-active, .modal-leave-active, .drawer-enter-active, .drawer-leave-active, .toast-enter-active, .toast-leave-active { transition: none; }
   .modal-enter-from, .modal-leave-to, .drawer-enter-from, .drawer-leave-to, .toast-enter-from, .toast-leave-to { opacity: 1; transform: none; }
 }

@@ -11,12 +11,13 @@ export type Tenant = {
   updated_at: string
 }
 
-export type Region = {
+export type OrgUnit = {
   id: string
+  tenant_id: string
   parent_id?: string
   name: string
   created_at: string
-  children?: Region[]
+  children?: OrgUnit[]
 }
 
 export type IdentityUser = {
@@ -25,8 +26,9 @@ export type IdentityUser = {
   username: string
   display_name: string
   status: IdentityStatus
+  all_orgs: boolean
   roles: string[]
-  region_ids: string[]
+  org_ids: string[]
   created_at: string
   updated_at: string
 }
@@ -36,20 +38,22 @@ export type CreateUserInput = {
   username: string
   password: string
   display_name: string
+  all_orgs?: boolean
   roles: string[]
-  region_ids: string[]
+  org_ids: string[]
 }
 
 export type UpdateUserInput = {
   display_name?: string
   status?: IdentityStatus
+  all_orgs?: boolean
   roles?: string[]
-  region_ids?: string[]
+  org_ids?: string[]
 }
 
 export const ROLE_META: Record<string, { label: string; hint: string }> = {
-  node_admin: { label: '节点管理员', hint: '全部权限，含租户/用户/区域管理' },
-  tenant_admin: { label: '租户管理员', hint: '设备全权，Access 查看与确认' },
+  node_admin: { label: '节点管理员', hint: '全部权限，含租户/用户/组织管理' },
+  tenant_admin: { label: '租户管理员', hint: '设备全权、组织架构管理，Access 查看与确认' },
   operator: { label: '操作员', hint: '设备查看与启用，Access 查看' },
   viewer: { label: '观察者', hint: '设备与 Access 只读' },
 }
@@ -68,25 +72,31 @@ export function setTenantStatus(id: string, status: IdentityStatus): Promise<Ten
   return request(`/api/v1/tenants/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) })
 }
 
-// --- regions ---
+// --- org units ---
 
-export function listRegions(): Promise<Region[]> {
-  return request('/api/v1/regions')
+export function listOrgUnits(tenantID?: string): Promise<OrgUnit[]> {
+  const suffix = tenantID ? `?tenant_id=${encodeURIComponent(tenantID)}` : ''
+  return request(`/api/v1/org-units${suffix}`)
 }
 
-export function createRegion(parentID: string, name: string): Promise<Region> {
-  return request('/api/v1/regions', {
+export function createOrgUnit(tenantID: string | undefined, parentID: string, name: string): Promise<OrgUnit> {
+  const suffix = tenantID ? `?tenant_id=${encodeURIComponent(tenantID)}` : ''
+  return request(`/api/v1/org-units${suffix}`, {
     method: 'POST',
     body: JSON.stringify({ parent_id: parentID, name }),
   })
 }
 
-export function renameRegion(id: string, name: string): Promise<Region> {
-  return request(`/api/v1/regions/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) })
+export function renameOrgUnit(id: string, name: string): Promise<OrgUnit> {
+  return request(`/api/v1/org-units/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) })
 }
 
-export function deleteRegion(id: string): Promise<void> {
-  return request(`/api/v1/regions/${id}`, { method: 'DELETE' })
+export function moveOrgUnit(id: string, parentID: string): Promise<OrgUnit> {
+  return request(`/api/v1/org-units/${id}`, { method: 'PATCH', body: JSON.stringify({ parent_id: parentID }) })
+}
+
+export function deleteOrgUnit(id: string): Promise<void> {
+  return request(`/api/v1/org-units/${id}`, { method: 'DELETE' })
 }
 
 // --- users ---

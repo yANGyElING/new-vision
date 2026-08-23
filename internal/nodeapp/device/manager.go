@@ -68,9 +68,13 @@ func (m *DeviceManager) UpdateMeta(ctx context.Context, id string, name, manufac
 	return m.repository.UpdateMeta(ctx, id, name, manufacturer)
 }
 
-// List returns devices visible to the given tenant and region set.
-func (m *DeviceManager) List(ctx context.Context, tenantID string, regionIDs []string) ([]Device, error) {
-	devices, err := m.repository.ListByTenant(ctx, tenantID, regionIDs)
+func (m *DeviceManager) SetOrgUnit(ctx context.Context, id string, orgUnitID *string) (Device, error) {
+	return m.repository.SetOrgUnit(ctx, id, orgUnitID)
+}
+
+// List returns devices visible to the given tenant and org set.
+func (m *DeviceManager) List(ctx context.Context, tenantID string, orgUnitIDs []string, includeUnassigned bool) ([]Device, error) {
+	devices, err := m.repository.ListByTenant(ctx, tenantID, orgUnitIDs, includeUnassigned)
 	if err != nil {
 		return nil, err
 	}
@@ -100,9 +104,13 @@ func (m *DeviceManager) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// EnsureVisible checks that the device belongs to the caller's tenant and a
-// region in the allowed set. It returns ErrNoAccess when not visible.
-func (m *DeviceManager) EnsureVisible(ctx context.Context, tenantID string, regionIDs []string, id string) (Device, error) {
+// EnsureVisible checks that the device belongs to the caller's tenant and is
+// inside the allowed org set. Full-visibility callers (includeUnassigned,
+// i.e. node_admin / all_orgs) see every device in their tenant, including
+// unassigned ones. Scoped callers see only devices whose org unit is inside
+// the allowed set; unassigned devices (org_unit_id NULL) are never visible
+// to scoped callers. It returns ErrNoAccess when not visible.
+func (m *DeviceManager) EnsureVisible(ctx context.Context, tenantID string, orgUnitIDs []string, includeUnassigned bool, id string) (Device, error) {
 	device, err := m.repository.Get(ctx, id)
 	if err != nil {
 		return Device{}, err
@@ -110,8 +118,14 @@ func (m *DeviceManager) EnsureVisible(ctx context.Context, tenantID string, regi
 	if device.TenantID != tenantID {
 		return Device{}, ErrNoAccess
 	}
-	for _, regionID := range regionIDs {
-		if regionID == device.RegionID {
+	if includeUnassigned {
+		return device, nil
+	}
+	if device.OrgUnitID == nil {
+		return Device{}, ErrNoAccess
+	}
+	for _, orgUnitID := range orgUnitIDs {
+		if orgUnitID == *device.OrgUnitID {
 			return device, nil
 		}
 	}

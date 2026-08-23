@@ -11,19 +11,19 @@ import (
 	"github.com/new-vision-lab/new-vision/internal/audit"
 )
 
-// Handler exposes tenant/region/user/role management.
-// Every endpoint requires the caller to be a node_admin (enforced by the
-// authz middleware mapping routes to identity:manage).
+// Handler exposes tenant/org-unit/user/role management.
+// Tenants/users require node_admin (identity:manage); org-unit endpoints
+// require org_unit:manage (node_admin full, tenant_admin own-tenant only,
+// enforced by the authz middleware + tenantScope below).
 type Handler struct {
-	store        *Store
-	audit        *audit.Writer
-	hasher       interface{ Hash(string) (string, error) }
-	principal    func(context.Context) *PrincipalInfo
-	onRoleChanged func(tenantID string)
+	store     *Store
+	audit     *audit.Writer
+	hasher    interface{ Hash(string) (string, error) }
+	principal func(context.Context) *PrincipalInfo
 }
 
-func NewHandler(store *Store, audit *audit.Writer, hasher interface{ Hash(string) (string, error) }, principal func(context.Context) *PrincipalInfo, onRoleChanged func(tenantID string)) *Handler {
-	return &Handler{store: store, audit: audit, hasher: hasher, principal: principal, onRoleChanged: onRoleChanged}
+func NewHandler(store *Store, audit *audit.Writer, hasher interface{ Hash(string) (string, error) }, principal func(context.Context) *PrincipalInfo) *Handler {
+	return &Handler{store: store, audit: audit, hasher: hasher, principal: principal}
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
@@ -108,12 +108,6 @@ func (h *Handler) tenantScope(r *http.Request, p *PrincipalInfo) (string, error)
 	return requested, nil
 }
 
-func (h *Handler) roleChanged(tenantID string) {
-	if h.onRoleChanged != nil {
-		h.onRoleChanged(tenantID)
-	}
-}
-
 // --- tenants ---
 
 func (h *Handler) CreateTenant(w http.ResponseWriter, r *http.Request) {
@@ -166,9 +160,27 @@ func (h *Handler) PatchTenant(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tenant)
 }
 
-// --- regions ---
+// --- org units ---
 
-func (h *Handler) CreateRegion(w http.ResponseWriter, r *http.Request) {
+// parseOptionalID returns nil for an empty string and a pointer otherwise.
+func parseOptionalID(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func (h *Handler) CreateOrgUnit(w http.ResponseWriter, r *http.Request) {
+	p := h.p(r)
+	if p == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing principal")
+		return
+	}
+	tenantID, err := h.tenantScope(r, p)
+	if err != nil {
+		mapIdentityError(w, err)
+		return
+	}
 	var in struct {
 		ParentID string `json:"parent_id"`
 		Name     string `json:"name"`
@@ -181,17 +193,35 @@ func (h *Handler) CreateRegion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "name must be non-empty and at most 255 bytes")
 		return
 	}
-	region, err := h.store.Regions.Create(r.Context(), in.ParentID, in.Name)
+	if in.ParentID != "" {
+		// The parent must exist in the same tenant (validated by the
+		// repository via the FK + tenant filter).
+		if _, err := h.store.OrgUnits.Get(r.Context(), tenantID, in.ParentID); err != nil {
+			mapIdentityError(w, err)
+			return
+		}
+	}
+	orgUnit, err := h.store.OrgUnits.Create(r.Context(), tenantID, parseOptionalID(in.ParentID), in.Name)
 	if err != nil {
 		mapIdentityError(w, err)
 		return
 	}
-	h.auditEntry(r, "identity.region.create", "region", region.ID, audit.ResultSuccess, map[string]string{"name": in.Name})
-	writeJSON(w, http.StatusCreated, region)
+	h.auditEntry(r, "identity.org_unit.create", "org_unit", orgUnit.ID, audit.ResultSuccess, map[string]string{"name": in.Name})
+	writeJSON(w, http.StatusCreated, orgUnit)
 }
 
-func (h *Handler) ListRegions(w http.ResponseWriter, r *http.Request) {
-	tree, err := h.store.Regions.Tree(r.Context())
+func (h *Handler) ListOrgUnits(w http.ResponseWriter, r *http.Request) {
+	p := h.p(r)
+	if p == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing principal")
+		return
+	}
+	tenantID, err := h.tenantScope(r, p)
+	if err != nil {
+		mapIdentityError(w, err)
+		return
+	}
+	tree, err := h.store.OrgUnits.Tree(r.Context(), tenantID)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "identity storage is unavailable")
 		return
@@ -199,35 +229,80 @@ func (h *Handler) ListRegions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tree)
 }
 
-func (h *Handler) PatchRegion(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) PatchOrgUnit(w http.ResponseWriter, r *http.Request) {
+	p := h.p(r)
+	if p == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing principal")
+		return
+	}
 	id := r.PathValue("id")
+	tenantID, err := h.tenantScope(r, p)
+	if err != nil {
+		mapIdentityError(w, err)
+		return
+	}
 	var in struct {
-		Name *string `json:"name"`
+		Name     *string `json:"name"`
+		ParentID *string `json:"parent_id"`
 	}
 	if err := decodeBody(w, r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if in.Name == nil || *in.Name == "" || len(*in.Name) > 255 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "name must be non-empty and at most 255 bytes")
+	if in.Name == nil && in.ParentID == nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "at least one of name, parent_id is required")
 		return
 	}
-	region, err := h.store.Regions.UpdateName(r.Context(), id, *in.Name)
+	var orgUnit OrgUnit
+	switch {
+	case in.Name != nil && in.ParentID != nil:
+		if *in.Name == "" || len(*in.Name) > 255 {
+			writeError(w, http.StatusBadRequest, "invalid_request", "name must be non-empty and at most 255 bytes")
+			return
+		}
+		orgUnit, err = h.store.OrgUnits.UpdateNameAndParent(r.Context(), tenantID, id, *in.Name, parseOptionalID(*in.ParentID))
+		if err != nil {
+			mapIdentityError(w, err)
+			return
+		}
+	case in.Name != nil:
+		if *in.Name == "" || len(*in.Name) > 255 {
+			writeError(w, http.StatusBadRequest, "invalid_request", "name must be non-empty and at most 255 bytes")
+			return
+		}
+		orgUnit, err = h.store.OrgUnits.UpdateName(r.Context(), tenantID, id, *in.Name)
+		if err != nil {
+			mapIdentityError(w, err)
+			return
+		}
+	default:
+		orgUnit, err = h.store.OrgUnits.UpdateParent(r.Context(), tenantID, id, parseOptionalID(*in.ParentID))
+		if err != nil {
+			mapIdentityError(w, err)
+			return
+		}
+	}
+	h.auditEntry(r, "identity.org_unit.update", "org_unit", id, audit.ResultSuccess, map[string]string{"name": orgUnit.Name})
+	writeJSON(w, http.StatusOK, orgUnit)
+}
+
+func (h *Handler) DeleteOrgUnit(w http.ResponseWriter, r *http.Request) {
+	p := h.p(r)
+	if p == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing principal")
+		return
+	}
+	id := r.PathValue("id")
+	tenantID, err := h.tenantScope(r, p)
 	if err != nil {
 		mapIdentityError(w, err)
 		return
 	}
-	h.auditEntry(r, "identity.region.update", "region", id, audit.ResultSuccess, map[string]string{"name": *in.Name})
-	writeJSON(w, http.StatusOK, region)
-}
-
-func (h *Handler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if err := h.store.Regions.Delete(r.Context(), id); err != nil {
+	if err := h.store.OrgUnits.Delete(r.Context(), tenantID, id); err != nil {
 		mapIdentityError(w, err)
 		return
 	}
-	h.auditEntry(r, "identity.region.delete", "region", id, audit.ResultSuccess, nil)
+	h.auditEntry(r, "identity.org_unit.delete", "org_unit", id, audit.ResultSuccess, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -273,7 +348,6 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		mapIdentityError(w, err)
 		return
 	}
-	h.roleChanged(in.TenantID)
 	h.auditEntry(r, "identity.user.create", "user", user.ID, audit.ResultSuccess, map[string]string{"username": user.Username})
 	writeJSON(w, http.StatusCreated, user)
 }
@@ -352,9 +426,6 @@ func (h *Handler) PatchUser(w http.ResponseWriter, r *http.Request) {
 		mapIdentityError(w, err)
 		return
 	}
-	if in.Roles != nil {
-		h.roleChanged(tenantID)
-	}
 	h.auditEntry(r, "identity.user.update", "user", id, audit.ResultSuccess, map[string]string{"roles": stringsJoin(in.Roles)})
 	writeJSON(w, http.StatusOK, user)
 }
@@ -379,7 +450,6 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		mapIdentityError(w, err)
 		return
 	}
-	h.roleChanged(tenantID)
 	h.auditEntry(r, "identity.user.delete", "user", id, audit.ResultSuccess, nil)
 	w.WriteHeader(http.StatusNoContent)
 }

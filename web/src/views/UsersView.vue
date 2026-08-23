@@ -9,9 +9,9 @@ import { useDevice } from '@/composables/useDevice'
 import { fetchHealth, type HealthState } from '@/api/health'
 import { me } from '@/api/auth'
 import {
-  ROLE_META, createUser, deleteUser, listRegions, listRoles, listTenants, listUsers,
+  ROLE_META, createUser, deleteUser, listOrgUnits, listRoles, listTenants, listUsers,
   setUserPassword, updateUser,
-  type IdentityUser, type Region, type Tenant,
+  type IdentityUser, type OrgUnit, type Tenant,
 } from '@/api/identity'
 
 // ---------- device detection ----------
@@ -66,27 +66,27 @@ async function loadTenants() {
   }
 }
 
-// ---------- regions (scope picker) ----------
-const regionTree = ref<Region[]>([])
+// ---------- org units (scope picker) ----------
+const orgTree = ref<OrgUnit[]>([])
 
-type FlatRegion = { region: Region; depth: number; path: string }
+type FlatOrg = { org: OrgUnit; depth: number; path: string }
 
-const flatRegions = computed<FlatRegion[]>(() => {
-  const out: FlatRegion[] = []
-  const walk = (nodes: Region[], depth: number, prefix: string) => {
+const flatOrgTree = computed<FlatOrg[]>(() => {
+  const out: FlatOrg[] = []
+  const walk = (nodes: OrgUnit[], depth: number, prefix: string) => {
     for (const n of nodes) {
       const path = prefix ? `${prefix} / ${n.name}` : n.name
-      out.push({ region: n, depth, path })
+      out.push({ org: n, depth, path })
       if (n.children?.length) walk(n.children, depth + 1, path)
     }
   }
-  walk(regionTree.value, 0, '')
+  walk(orgTree.value, 0, '')
   return out
 })
 
-async function loadRegions() {
+async function loadOrgUnits() {
   try {
-    regionTree.value = await listRegions()
+    orgTree.value = await listOrgUnits()
   } catch {
     /* keep empty tree; picker shows a hint */
   }
@@ -169,10 +169,10 @@ const userSaving = ref(false)
 const userFormError = ref('')
 const userForm = ref<{
   id: string; tenant_id: string; username: string; display_name: string
-  password: string; status: 'active' | 'disabled'; roles: string[]; region_ids: string[]
+  password: string; status: 'active' | 'disabled'; all_orgs: boolean; roles: string[]; org_ids: string[]
 }>({
   id: '', tenant_id: '', username: '', display_name: '',
-  password: '', status: 'active', roles: [], region_ids: [],
+  password: '', status: 'active', all_orgs: false, roles: [], org_ids: [],
 })
 const passwordVisible = ref(false)
 
@@ -180,7 +180,7 @@ function openUserCreate() {
   userModalMode.value = 'create'
   userForm.value = {
     id: '', tenant_id: currentUser.value?.tenantID ?? '', username: '', display_name: '',
-    password: '', status: 'active', roles: [], region_ids: [],
+    password: '', status: 'active', all_orgs: false, roles: [], org_ids: [],
   }
   passwordVisible.value = false
   userFormError.value = ''
@@ -197,8 +197,9 @@ function openUserEdit(user: IdentityUser) {
     display_name: user.display_name,
     password: '',
     status: user.status,
+    all_orgs: user.all_orgs,
     roles: [...user.roles],
-    region_ids: [...user.region_ids],
+    org_ids: [...user.org_ids],
   }
   passwordVisible.value = false
   userFormError.value = ''
@@ -234,9 +235,9 @@ const roleQuery = ref('')
 const roleSearchEl = ref<HTMLInputElement | null>(null)
 const tenantOpen = ref(false)
 const statusOpen = ref(false)
-const regionOpen = ref(false)
-const regionQuery = ref('')
-const regionSearchEl = ref<HTMLInputElement | null>(null)
+const orgOpen = ref(false)
+const orgQuery = ref('')
+const orgSearchEl = ref<HTMLInputElement | null>(null)
 
 const STATUS_OPTIONS: { value: 'active' | 'disabled'; label: string }[] = [
   { value: 'active', label: '启用' },
@@ -254,14 +255,14 @@ const filteredRoles = computed(() => {
   return roleOptions.value.filter((o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q))
 })
 
-const filteredRegions = computed(() => {
-  const q = regionQuery.value.trim().toLowerCase()
-  if (!q) return flatRegions.value
-  return flatRegions.value.filter((f) => f.region.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q))
+const filteredOrgUnits = computed(() => {
+  const q = orgQuery.value.trim().toLowerCase()
+  if (!q) return flatOrgTree.value
+  return flatOrgTree.value.filter((f) => f.org.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q))
 })
 
-function regionNameOf(id: string): string {
-  return flatRegions.value.find((f) => f.region.id === id)?.region.name ?? id
+function orgNameOf(id: string): string {
+  return flatOrgTree.value.find((f) => f.org.id === id)?.org.name ?? id
 }
 
 function tenantLabel(id: string): string {
@@ -272,9 +273,9 @@ function closeAllPopovers() {
   roleOpen.value = false
   tenantOpen.value = false
   statusOpen.value = false
-  regionOpen.value = false
+  orgOpen.value = false
   roleQuery.value = ''
-  regionQuery.value = ''
+  orgQuery.value = ''
 }
 
 function pickFirstRole() {
@@ -288,15 +289,21 @@ function pickFirstRole() {
 watch(roleOpen, async (open) => {
   if (open) { await nextTick(); roleSearchEl.value?.focus() } else roleQuery.value = ''
 })
-watch(regionOpen, async (open) => {
-  if (open) { await nextTick(); regionSearchEl.value?.focus() } else regionQuery.value = ''
+watch(orgOpen, async (open) => {
+  if (open) { await nextTick(); orgSearchEl.value?.focus() } else orgQuery.value = ''
 })
 
-function toggleRegionScope(id: string) {
-  const ids = userForm.value.region_ids
+function toggleOrgScope(id: string) {
+  const ids = userForm.value.org_ids
   const idx = ids.indexOf(id)
   if (idx >= 0) ids.splice(idx, 1)
   else ids.push(id)
+}
+
+function toggleOrgPicker() {
+  if (userForm.value.all_orgs) return
+  closeAllPopovers()
+  orgOpen.value = !orgOpen.value
 }
 
 function generatePassword() {
@@ -323,16 +330,18 @@ async function submitUserForm() {
         username,
         password: userForm.value.password,
         display_name: displayName,
+        all_orgs: userForm.value.all_orgs,
         roles: userForm.value.roles,
-        region_ids: userForm.value.region_ids,
+        org_ids: userForm.value.org_ids,
       })
       flashMessage(`用户 ${username} 已创建`)
     } else {
       await updateUser(userForm.value.id, {
         display_name: displayName,
         status: userForm.value.status,
+        all_orgs: userForm.value.all_orgs,
         roles: userForm.value.roles,
-        region_ids: userForm.value.region_ids,
+        org_ids: userForm.value.org_ids,
       })
       flashMessage(`用户 ${username} 已更新`)
     }
@@ -449,7 +458,7 @@ onMounted(() => {
         accessDenied.value = true
         return
       }
-      await Promise.all([loadTenants(), loadRegions(), loadRoles()])
+      await Promise.all([loadTenants(), loadOrgUnits(), loadRoles()])
       await loadUsers()
     } catch (error) {
       usersError.value = error instanceof Error ? error.message : '初始化失败'
@@ -788,30 +797,40 @@ onUnmounted(() => {
               </div>
 
               <div class="nt-row">
-                <div class="nt-label">区域范围</div>
+                <div class="nt-label">管辖全部组织</div>
                 <div class="nt-ctrl">
-                  <div class="nt-multi" :class="{ open: regionOpen }" role="button" tabindex="0" aria-haspopup="listbox" :aria-expanded="regionOpen" @click.stop="closeAllPopovers(); regionOpen = !regionOpen" @keydown.enter.prevent="closeAllPopovers(); regionOpen = !regionOpen">
-                    <span v-for="id in userForm.region_ids" :key="id" class="nt-chip">
-                      {{ regionNameOf(id) }}
-                      <button type="button" :aria-label="`移除 ${regionNameOf(id)}`" @click.stop="toggleRegionScope(id)"><X :size="10" /></button>
+                  <label class="nt-check">
+                    <input v-model="userForm.all_orgs" type="checkbox" />
+                    <span>勾选后该用户可见本租户全部组织与未分配设备（不依赖下方选择）。</span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="nt-row">
+                <div class="nt-label">管辖组织</div>
+                <div class="nt-ctrl">
+                  <div class="nt-multi" :class="{ open: orgOpen, muted: userForm.all_orgs }" role="button" tabindex="0" aria-haspopup="listbox" :aria-expanded="orgOpen" :aria-disabled="userForm.all_orgs" @click.stop="toggleOrgPicker()" @keydown.enter.prevent="toggleOrgPicker()">
+                    <span v-for="id in userForm.org_ids" :key="id" class="nt-chip">
+                      {{ orgNameOf(id) }}
+                      <button type="button" :aria-label="`移除 ${orgNameOf(id)}`" @click.stop="toggleOrgScope(id)"><X :size="10" /></button>
                     </span>
-                    <span v-if="userForm.region_ids.length === 0" class="nt-ph">选择区域，可多选</span>
+                    <span v-if="userForm.org_ids.length === 0" class="nt-ph">选择组织，可多选</span>
                   </div>
                   <Transition name="ntpop">
-                    <div v-if="regionOpen" class="nt-pop" @click.stop>
+                    <div v-if="orgOpen" class="nt-pop" @click.stop>
                       <div class="nt-search">
                         <Search :size="13" />
-                        <input v-model="regionQuery" aria-label="搜索区域" placeholder="搜索区域…" @keydown.esc="regionOpen = false">
+                        <input v-model="orgQuery" aria-label="搜索组织" placeholder="搜索组织…" @keydown.esc="orgOpen = false">
                       </div>
                       <div class="nt-list" role="listbox">
-                        <button v-for="f in filteredRegions" :key="f.region.id" type="button" role="option" class="nt-opt" :class="{ sel: userForm.region_ids.includes(f.region.id) }" @click="toggleRegionScope(f.region.id)">
-                          <Check :size="14" class="nt-ck" />{{ f.region.name }}<span class="nt-opt-hint">{{ f.path }}</span>
+                        <button v-for="f in filteredOrgUnits" :key="f.org.id" type="button" role="option" class="nt-opt" :class="{ sel: userForm.org_ids.includes(f.org.id) }" @click="toggleOrgScope(f.org.id)">
+                          <Check :size="14" class="nt-ck" />{{ f.org.name }}<span class="nt-opt-hint">{{ f.path }}</span>
                         </button>
-                        <div v-if="filteredRegions.length === 0" class="nt-empty">无匹配区域</div>
+                        <div v-if="filteredOrgUnits.length === 0" class="nt-empty">无匹配组织</div>
                       </div>
                     </div>
                   </Transition>
-                  <p v-if="flatRegions.length === 0" class="nt-note">暂无区域可分配，可先在「组织架构」页创建。</p>
+                  <p v-if="flatOrgTree.length === 0" class="nt-note">暂无组织可分配，可先在「组织架构」页创建。</p>
                 </div>
               </div>
 
@@ -1064,6 +1083,10 @@ onUnmounted(() => {
 .nt-empty { padding: 12px 10px; font-size: 12px; color: #9b9a97; }
 
 .nt-multi { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; min-height: 34px; padding: 4px 8px; background: #fff; border: 1px solid #e3e2e0; border-radius: 6px; cursor: pointer; transition: border-color .12s, box-shadow .12s; }
+.nt-multi.muted { opacity: .55; cursor: not-allowed; }
+.nt-check { display: flex; align-items: flex-start; gap: 9px; padding: 8px 0; cursor: pointer; font-size: 13px; line-height: 1.45; color: #3A3A3C; }
+.nt-check input { margin-top: 2px; accent-color: #1C1C1E; }
+.nt-check span { flex: 1; }
 .nt-multi:hover { border-color: #d3d1cb; }
 .nt-multi.open { border-color: #b3d4f2; box-shadow: 0 0 0 3px rgba(35,131,226,.14); }
 .nt-multi:focus-visible { outline: none; border-color: #b3d4f2; box-shadow: 0 0 0 3px rgba(35,131,226,.14); }
