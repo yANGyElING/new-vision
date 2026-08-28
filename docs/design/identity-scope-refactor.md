@@ -1,10 +1,11 @@
 # 身份与权限模型重构：区域(Region) → 组织单元(Org Unit)
 
-- 状态：🔄 设计提案（0.x，可破坏性重构，无向后兼容负担）
+- 状态：✅ 已实现（commit `7d4eb3e`）；其中 **D4 / D5 / D7 已被 [`permission-model.md`](permission-model.md) 推翻**
 - 范围：node-app 本地身份与权限模型（identity / authn / authz / device / web）
 - 目标：消除「区域」与「组织架构」两套概念并存的冗余，收敛为一套权限架构
 - 相关：架构基线 [`federated-video-platform-architecture.md`](federated-video-platform-architecture.md)（多租户、区域只是管理属性）
-- 当前实现对照：[`../knowledge-base.md`](../knowledge-base.md)（实现后需同步更新 §5/§6）
+- 后继：[`permission-model.md`](permission-model.md)（数据权限与功能权限的完整模型，D11 起）
+- 当前实现对照：[`../knowledge-base.md`](../knowledge-base.md)（§5/§6 尚未同步，待补）
 
 ---
 
@@ -203,11 +204,20 @@ SELECT id FROM subtree;
 - **D9 同级重名唯一索引用 COALESCE**：修复 PostgreSQL 中 NULL 不参与唯一约束的现存 bug（根级重名可入库）。
 - **D10 设备创建与组织解耦**：`devices.org_unit_id` 可空。技术接入（SIP 凭据/注册）不依赖组织树；未分配设备存在但仅对平台级可见（node_admin / all_orgs），分配后进入正常 scope。
 
-## 5. 开放问题（需用户确认）
+## 5. 开放问题（已全部收口）
 
-- Q1：`all_orgs` 是否在用户表单中作为独立开关展示（如"管辖全部组织"复选框），还是仅作为 node_admin 的隐藏能力？
-- Q2：组织单元移动/重挂（变更 parent_id）是否在本次范围内？当前设计**不含**移动操作（0.x 可后补）。
-- ~~设备创建门槛~~：已撤销（D10，org_unit_id 可空）。
+- ~~Q1：`all_orgs` 是否在用户表单中作为独立开关展示~~ → 实现为独立复选框（`UsersView.vue:799`）；**后续被 `permission-model.md` D11 整体取消**，「全公司」改为勾选租户根节点。
+- ~~Q2：组织单元移动/重挂是否在本次范围内~~ → **已实现**：`PATCH /api/v1/org-units/{id}` 支持 `parent_id`，单事务内完成（`FOR UPDATE` 锁 + 同租户校验 + 递归 CTE 环检测 + 同级重名冲突），见 `internal/identity/repository.go:153-272`。
+- ~~设备创建门槛~~：已撤销（D10，org_unit_id 可空）；**后续被 `permission-model.md` D11 再次翻转**为非空 + 根节点兜底。
+
+## 5.1 被后继文档推翻的决策
+
+| 决策 | 原内容 | 推翻者 | 理由 |
+|---|---|---|---|
+| D4 | 不播种默认根，树从空开始 | `permission-model.md` D11 | 当时否掉的是**全局共享 + 魔法 UUID** 的旧根；每租户一棵、建租户时创建的根没有这两个毛病，且消除了 `org_unit_id IS NULL` 分支（该分支已导致一次 CRITICAL 缺陷） |
+| D5 | 用 `all_orgs` 显式标记表达「全租户可见」 | `permission-model.md` D11 | 有了强制唯一的根节点后，「勾根」不会漂移，标记冗余；两处可表达同一件事会产生矛盾态 |
+| D7 | 角色→权限矩阵是编译期常量，直接查表 | `permission-model.md` D18 | 租户需要自定义角色，矩阵须入库。「不用规则引擎（Casbin）」这一半保留 |
+| §1.3「一致性要求」 | `devices.org_unit_id` 与 `user_org_scopes.org_unit_id` 的同租户约束**由应用层校验，DB 层不强行跨表复合外键** | `permission-model.md` §6.1（不变量 I3） | 实测结果：三处写入路径**无一处**做了校验，唯一守卫 `orgUnitAllowed` 还在特权分支上无条件放行 → 平台管理员可把 A 租户设备挂到 B 租户组织节点，造成跨租户数据撕裂。改为数据库复合外键强制 |
 
 ## 6. 交叉引用
 
