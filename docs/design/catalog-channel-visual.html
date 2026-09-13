@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Catalog 与通道模型 — 设计理解确认</title>
+<style>
+  :root {
+    --bg: #fafaf9; --card: #ffffff; --ink: #1c1c1e; --sub: #6b6b70;
+    --line: #e3e2df; --accent: #34a26f; --warn: #d9730d; --bad: #e03e3e;
+    --blue: #337ea9; --mono: "SF Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .page { max-width: 960px; margin: 0 auto; padding: 48px 24px 96px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 19px; margin: 48px 0 4px; display: flex; align-items: center; gap: 10px; }
+  h2 .tag { font: 600 12px var(--mono); background: var(--ink); color: #fff;
+            border-radius: 6px; padding: 2px 8px; }
+  .lede { color: var(--sub); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+          padding: 20px 24px; margin-top: 16px; }
+  .confirm { margin-top: 16px; border-left: 3px solid var(--accent); background: #f2faf6;
+             border-radius: 0 8px 8px 0; padding: 10px 16px; }
+  .confirm b { color: var(--accent); }
+  code { font-family: var(--mono); font-size: 13px; background: #f3f2f0;
+         border-radius: 4px; padding: 1px 5px; }
+  svg { display: block; margin: 0 auto; max-width: 100%; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--sub); font-weight: 500; font-size: 13px; }
+  .yes { color: var(--accent); font-weight: 600; }
+  .no { color: var(--bad); font-weight: 600; }
+  .mut { color: var(--sub); }
+  .final { margin-top: 48px; padding: 20px 24px; border: 1px dashed var(--ink); border-radius: 12px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Catalog 与通道模型 —— 可视化理解确认</h1>
+<p class="lede">四个确认点：A 数据流向 / B 字段权威 / C 通道生命周期 / D 权限跟随。哪块不对，指哪块。</p>
+
+<!-- ========== A ========== -->
+<h2><span class="tag">A</span>数据怎么流：通道只从设备来</h2>
+<div class="card">
+<svg width="900" height="330" viewBox="0 0 900 330" font-family="inherit">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b6b70"/>
+    </marker>
+  </defs>
+  <!-- devices -->
+  <rect x="20" y="60" width="170" height="190" rx="12" fill="#f3f2f0" stroke="#e3e2df"/>
+  <text x="105" y="88" text-anchor="middle" font-size="14" font-weight="600">五凤泵站 NVR</text>
+  <g font-size="12" fill="#6b6b70">
+    <rect x="40" y="105" width="130" height="26" rx="6" fill="#fff" stroke="#e3e2df"/>
+    <text x="105" y="122" text-anchor="middle">大门口 (ch 01)</text>
+    <rect x="40" y="139" width="130" height="26" rx="6" fill="#fff" stroke="#e3e2df"/>
+    <text x="105" y="156" text-anchor="middle">泵房 (ch 02)</text>
+    <rect x="40" y="173" width="130" height="26" rx="6" fill="#fff" stroke="#e3e2df"/>
+    <text x="105" y="190" text-anchor="middle">……共 8 路</text>
+  </g>
+  <!-- access -->
+  <rect x="330" y="40" width="220" height="100" rx="12" fill="#fff" stroke="#1c1c1e" stroke-width="1.2"/>
+  <text x="440" y="68" text-anchor="middle" font-size="14" font-weight="600">node-access</text>
+  <text x="440" y="90" text-anchor="middle" font-size="12" fill="#6b6b70">Kamailio + gb28181 C 模块</text>
+  <text x="440" y="110" text-anchor="middle" font-size="12" fill="#337ea9">①新增: 解析 Catalog XML</text>
+  <!-- redis stream -->
+  <rect x="330" y="190" width="220" height="60" rx="12" fill="#fff7ed" stroke="#d9730d"/>
+  <text x="440" y="215" text-anchor="middle" font-size="13" font-weight="600">Redis 事件流</text>
+  <text x="440" y="235" text-anchor="middle" font-size="12" fill="#6b6b70">nv:access:v1:events（已有通道）</text>
+  <!-- app -->
+  <rect x="660" y="40" width="220" height="210" rx="12" fill="#fff" stroke="#1c1c1e" stroke-width="1.2"/>
+  <text x="770" y="68" text-anchor="middle" font-size="14" font-weight="600">node-app</text>
+  <rect x="680" y="85" width="180" height="55" rx="8" fill="#f3f2f0"/>
+  <text x="770" y="107" text-anchor="middle" font-size="12">PostgreSQL</text>
+  <text x="770" y="126" text-anchor="middle" font-size="13" font-weight="600">channels 表（业务权威）</text>
+  <text x="770" y="165" text-anchor="middle" font-size="12" fill="#6b6b70">三个触发: 注册即查</text>
+  <text x="770" y="185" text-anchor="middle" font-size="12" fill="#6b6b70">+ 每小时轮询 + 手动刷新</text>
+  <text x="770" y="215" text-anchor="middle" font-size="12" fill="#337ea9">outbox 不碰（那是下行鉴权用）</text>
+  <!-- arrows -->
+  <line x1="190" y1="100" x2="325" y2="100" stroke="#6b6b70" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="258" y="88" text-anchor="middle" font-size="11" fill="#6b6b70">SIP 注册/心跳</text>
+  <line x1="325" y1="150" x2="195" y2="150" stroke="#337ea9" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#ar)"/>
+  <text x="258" y="142" text-anchor="middle" font-size="11" fill="#337ea9">平台问: 你有哪些通道?</text>
+  <line x1="190" y1="185" x2="325" y2="185" stroke="#34a26f" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="258" y="176" text-anchor="middle" font-size="11" fill="#34a26f">分批上报 Catalog</text>
+  <line x1="440" y1="140" x2="440" y2="185" stroke="#d9730d" stroke-width="1.5" marker-end="url(#ar)"/>
+  <line x1="550" y1="220" x2="655" y2="180" stroke="#d9730d" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="600" y="190" text-anchor="middle" font-size="11" fill="#d9730d">消费入库</text>
+  <!-- note -->
+  <text x="450" y="300" text-anchor="middle" font-size="13" fill="#1c1c1e" font-weight="600">
+    平台永远不凭空新建通道 —— 只能改名、挂组织、触发刷新
+  </text>
+</svg>
+</div>
+<div class="confirm"><b>确认 A：</b>通道数据的唯一来源是设备上报；方向是 access → app（上行），不走现有 outbox。</div>
+
+<!-- ========== B ========== -->
+<h2><span class="tag">B</span>一行通道数据，谁说了算</h2>
+<div class="card">
+<table>
+  <tr><th style="width:34%">字段</th><th>示例值</th><th>设备能写?</th><th>平台能写?</th></tr>
+  <tr><td><code>channel_code</code></td><td class="mut">34020000001320000001</td><td colspan="2" class="mut">身份锚点，谁都不改</td></tr>
+  <tr><td><code>report_name</code>（设备名）</td><td>"Channel 01"</td><td class="yes">✓ 每次同步刷新</td><td class="no">✗</td></tr>
+  <tr><td><code>display_name</code>（平台名）</td><td>"大门口"</td><td class="no">✗ 永远冲不掉</td><td class="yes">✓ 老张小李小陈维护</td></tr>
+  <tr><td><code>org_unit_id</code></td><td>NULL = 跟随设备</td><td class="no">✗</td><td class="yes">✓（初期 UI 不做）</td></tr>
+  <tr><td><code>reported_status</code></td><td>ON / OFF</td><td class="yes">✓ 每次同步刷新</td><td class="no">✗ 只读</td></tr>
+  <tr><td><code>missing</code></td><td>false</td><td colspan="2" class="mut">同步结果自动驱动（见 C）</td></tr>
+</table>
+<p style="margin:16px 0 0">界面显示的名字 = <code>COALESCE(display_name, report_name)</code> → <b>"大门口"</b><br>
+<span class="mut">运维小哥在 NVR 上把通道改成 "Channel 01"，老张在平台备注的名字纹丝不动。</span></p>
+</div>
+<div class="confirm"><b>确认 B：</b>设备上报只能写 <code>report_name</code> / <code>reported_status</code> 两列，其余列它碰不到；字段缺省时保留旧值，不清空。</div>
+
+<!-- ========== C ========== -->
+<h2><span class="tag">C</span>通道的三种活法（永不删除）</h2>
+<div class="card">
+<svg width="900" height="360" viewBox="0 0 900 360" font-family="inherit">
+  <defs>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b6b70"/>
+    </marker>
+  </defs>
+  <!-- online -->
+  <rect x="30" y="40" width="240" height="100" rx="12" fill="#f2faf6" stroke="#34a26f"/>
+  <circle cx="58" cy="72" r="7" fill="#34a26f"/>
+  <text x="76" y="77" font-size="14" font-weight="600">在线</text>
+  <text x="50" y="102" font-size="12" fill="#6b6b70">Catalog 报 Status=ON</text>
+  <text x="50" y="122" font-size="12" fill="#6b6b70">可点播 / 可授权</text>
+  <!-- offline -->
+  <rect x="30" y="180" width="240" height="100" rx="12" fill="#fff7ed" stroke="#d9730d"/>
+  <circle cx="58" cy="212" r="7" fill="none" stroke="#d9730d" stroke-width="2"/>
+  <text x="76" y="217" font-size="14" font-weight="600">离线</text>
+  <text x="50" y="242" font-size="12" fill="#6b6b70">Catalog 报 Status=OFF</text>
+  <text x="50" y="262" font-size="12" fill="#6b6b70">例: NVR 活着, 第3路被拔线</text>
+  <!-- missing -->
+  <rect x="590" y="110" width="270" height="120" rx="12" fill="#fef3f2" stroke="#e03e3e"/>
+  <text x="725" y="142" text-anchor="middle" font-size="14" font-weight="600" fill="#e03e3e">✕ 缺失 missing=true</text>
+  <text x="725" y="166" text-anchor="middle" font-size="12" fill="#6b6b70">完整同步后这路不再出现（被拆走）</text>
+  <text x="725" y="186" text-anchor="middle" font-size="12" fill="#6b6b70">行保留 → 组织归属、将来录像/告警不断链</text>
+  <text x="725" y="206" text-anchor="middle" font-size="12" fill="#6b6b70">小李能分清「坏了」和「拆了」</text>
+  <!-- arrows -->
+  <line x1="270" y1="170" x2="585" y2="160" stroke="#6b6b70" stroke-width="1.5" marker-end="url(#ar2)"/>
+  <text x="428" y="150" text-anchor="middle" font-size="12" fill="#6b6b70">一次完整同步未上报 → 标记缺失</text>
+  <line x1="590" y1="205" x2="275" y2="205" stroke="#34a26f" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#ar2)"/>
+  <text x="430" y="196" text-anchor="middle" font-size="12" fill="#34a26f">同编码再出现 → 自动复活, 归属接回</text>
+  <!-- guard -->
+  <rect x="300" y="290" width="540" height="50" rx="10" fill="#f3f2f0"/>
+  <text x="570" y="311" text-anchor="middle" font-size="13" font-weight="600">安全闸：Catalog 分批未收齐 → 当次同步整体作废</text>
+  <text x="570" y="330" text-anchor="middle" font-size="12" fill="#6b6b70">丢包绝不会被误判成「缺失」</text>
+  <!-- never -->
+  <text x="30" y="330" font-size="13" fill="#e03e3e" font-weight="600">❌ 永不存在：DELETE 这行</text>
+</svg>
+</div>
+<div class="confirm"><b>确认 C：</b>「离线」= 设备还承认这路但它掉了；「缺失」= 设备不再承认这路。缺失只认完整同步；恢复出厂变码 = 断链，接受。</div>
+
+<!-- ========== D ========== -->
+<h2><span class="tag">D</span>权限自动跟随：新通道开箱即在管辖内</h2>
+<div class="card">
+<svg width="900" height="260" viewBox="0 0 900 260" font-family="inherit">
+  <defs>
+    <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b6b70"/>
+    </marker>
+  </defs>
+  <!-- left tree -->
+  <rect x="30" y="30" width="300" height="200" rx="12" fill="#f3f2f0" stroke="#e3e2df"/>
+  <text x="180" y="58" text-anchor="middle" font-size="13" font-weight="600">福州水务 · 组织树</text>
+  <text x="60" y="88" font-size="13">鼓楼片区 <tspan fill="#6b6b70" font-size="12">← 小李的管辖范围</tspan></text>
+  <text x="80" y="114" font-size="13">└ 五凤泵站</text>
+  <text x="105" y="140" font-size="13" fill="#337ea9">└ NVR（设备, 挂这）</text>
+  <text x="130" y="166" font-size="13" fill="#337ea9">└ 通道9路, org_unit_id 全 NULL</text>
+  <text x="80" y="196" font-size="13">└ 洪山桥泵站</text>
+  <!-- flow -->
+  <rect x="420" y="60" width="440" height="140" rx="12" fill="#fff" stroke="#1c1c1e"/>
+  <text x="640" y="90" text-anchor="middle" font-size="13" font-weight="600">小李点播「五凤泵站 · 大门口」</text>
+  <text x="640" y="118" text-anchor="middle" font-size="12.5">通道 org_unit_id = NULL → 跟随设备</text>
+  <text x="640" y="140" text-anchor="middle" font-size="12.5">设备挂五凤泵站 → 五凤泵站 ⊆ 鼓楼片区 ✓</text>
+  <text x="640" y="168" text-anchor="middle" font-size="13" font-weight="600" fill="#34a26f">放行 —— 小李零配置，新摄像头接入即可见</text>
+  <line x1="330" y1="130" x2="415" y2="130" stroke="#6b6b70" stroke-width="1.5" marker-end="url(#ar3)"/>
+</svg>
+</div>
+<div class="confirm"><b>确认 D：</b>新通道 <code>org_unit_id</code> 一律 NULL（跟随设备）；设备换组织，通道自动跟着走（COALESCE 天然成立）。</div>
+
+<div class="final">
+  <b>全部对齐？</b> 四个确认点都认可的话，我把本次设计正式补登记进 Emma 工作流；文档已在 <code>docs/design/catalog-channel-model.md</code>（决策 D41–D48），索引已同步。
+</div>
+
+</div>
+</body>
+</html>

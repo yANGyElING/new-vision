@@ -1,166 +1,147 @@
-# Catalog 与通道模型（讨论提纲）
+# Catalog 与通道模型
 
-- 状态：⏳ **待讨论** —— 本文只是课题的背景与问题清单，**不包含任何已确定的设计**
+- 状态：✅ 设计已定稿（2026-09-12 与用户逐条确认），⏳ 未实施
 - 范围：GB28181 设备目录（Catalog）同步、通道（channel）的数据模型与生命周期
-- 为什么是现在：见 §1
-- 讨论方式：按 `.emma/skills/brainstorm` 的决策树分轮推进（该目录未纳入版本库）；事实由 agent 查证，决策由用户拍板
+- 姊妹文档：[`permission-model.md`](permission-model.md)（D28/D36 预设了通道作为授权对象，本文是该对象的实体设计）
+- 决策编号：D41–D48，接续 `identity-and-auth.md` 的 D40
 
 ---
 
-## 1. 为什么现在讨论这个课题
+## 0. 一句话
 
-**① 刚定稿的权限模型悬空在它上面。**
-
-[`permission-model.md`](permission-model.md) §2.8 已经决定「设备和通道都可以挂组织树」（D28），并写死了解析规则：
-
-```sql
-COALESCE(channels.org_unit_id, devices.org_unit_id)
-```
-
-但 `channels` 表、Go 类型、API **一行代码都不存在**（全仓库对 `channel|catalog|通道` 零匹配）。也就是说 D28/D36 建立在一个尚未设计的实体上。若通道的身份规则与该假设不符（例如通道编码会随设备恢复出厂而变化），§2.8 与那条 `COALESCE` 都要返工。
-
-**② 它是架构基线明确的下一个切片。**
-
-[`federated-video-platform-architecture.md`](federated-video-platform-architecture.md) §6.2 第 265 行：
-
-> 尚未实现（后续切片）：**Catalog**、DeviceInfo、DeviceStatus、Alarm、RecordInfo、PTZ、INVITE/ACK/BYE 和媒体行为。
-
-§15 阶段一的后续切片顺序也是 Catalog 打头。
-
-**③ 后面三个切片都依赖它。** 点播要指定通道、录像挂在通道上、告警来源是通道。它是播放 / 录像 / 告警的共同前置。
-
-**④ 零代码 = 零迁移成本。** 现在是最便宜的设计窗口。
+设备上报什么通道，平台就有什么通道；通道永远只标记不删除；平台维护的数据设备永远冲不掉。
 
 ---
 
-## 2. 背景：当前实现到哪一步
-
-### 2.1 已经跑通的链路
-
-```
-Camera ──REGISTER/Digest/KeepAlive──> node-access（Kamailio + 自定义 gb28181 C 模块）
-                                          │
-                                     Redis 运行状态（nv:access:v1:*）
-                                          │
-                        node-app 事件 poll/ack ──> 运行时投影（nv:nodeapp:v1:*）
-
-node-app ──profile outbox──JSON-RPC──> node-access
-   access.v1.applyDeviceProfile / removeDeviceProfile / replaceDeviceProfiles
-```
-
-- 设备业务数据权威在 node-app 的 PostgreSQL；
-- 只存 MD5 HA1，不存明文密码；
-- 「提交先于同步」：业务事务先提交，再经 outbox 异步同步至 Access，同步失败不回滚业务提交（基线核心原则 12）。
-
-### 2.2 现有设备模型（`internal/nodeapp/device/device.go:39-62`）
-
-```go
-type Device struct {
-    ID, TenantID, OrgUnitID
-    DeviceAccessID       // 20 位国标编码
-    DeviceName, Manufacturer, DeviceType
-    SIPUsername, SIPRealm, DigestAlgorithm, DigestHA1
-    Enabled
-    ProfileVersion, AccessSyncStatus, AccessSyncedVersion   // outbox 同步状态机
-    Runtime *access.RuntimeState                            // 来自 Redis 投影
-}
-```
-
-设备类型只有四个常量（`device.go:68-74`）：`IPC=132` / `NVR=118` / `DVR=111` / `Server=200`，取自 20 位编码的第 11–13 位。创建设备时传的是 `CenterCode`，编码由平台侧组装。
-
-**模型到注册与鉴权为止，没有任何目录 / 通道 / 媒体概念。**
-
-### 2.3 node-access 的职责边界（基线 §6.2）
-
-`node-access` 只做 SIP/GB28181 协议语义转换，**不负责**：播放权限、租户授权、告警业务规则、录像生命周期、设备业务数据权威。
-
-> 边界原则：`node-app` 通过版本化 Access API 表达业务意图，Kamailio 自定义模块负责协议语义转换。
-
-Catalog 的设计必须落在这条边界的两侧——协议交互在 Kamailio 侧，目录数据权威在 node-app 侧。
-
----
-
-## 3. 已被其他文档预设的约束
-
-讨论时不能推翻、或推翻了必须回头改文档的既有决定：
+## 1. 既有约束（来自其他文档，本文不重新决策）
 
 | 来源 | 约束 |
 |---|---|
-| `permission-model.md` D28 | 设备与通道是**两个授权对象**：设备归属 = 管理权锚点，通道归属 = 查看权锚点，可见性独立计算 |
-| `permission-model.md` D36 | `channels.org_unit_id` 可空，NULL = 跟随设备；解析用 `COALESCE`；UI 初期不提供单独入口 |
-| `permission-model.md` D29 | 媒体权限点（`stream:play` / `ptz:*` / `record:*` / `alarm:*`）的**范围锚点是通道**，不是设备 |
-| `permission-model.md` I3 | 任何指向 `org_units` 的外键，两端租户必须一致，由**数据库复合外键**强制 —— 通道表同样适用 |
+| `permission-model.md` D28 | 设备与通道是两个授权对象：设备归属 = 管理权锚点，通道归属 = 查看权锚点 |
+| `permission-model.md` D36 | `channels.org_unit_id` 可空，NULL = 跟随设备；可见性解析 `COALESCE(channels.org_unit_id, devices.org_unit_id)`；UI 初期不提供单独挂组织的入口 |
+| `permission-model.md` D29 | 媒体权限点（`stream:play` / `record:*` / `alarm:*`）的范围锚点是通道 |
+| `permission-model.md` I3 | 指向 `org_units` 的外键两端租户必须一致，由数据库复合外键强制——通道表同样适用 |
 | 基线 §2 原则 12 | 提交先于同步：业务事务先提交，同步失败不回滚 |
-| 基线 §6.2 | 协议状态由 Kamailio 独占，业务面不共享其内部 Redis key |
+| 基线 §6.2 | node-access 只做 SIP/GB28181 协议语义转换；目录数据权威在 node-app |
 
 ---
 
-## 4. 待讨论的问题
+## 2. 通道的身份（D41）
 
-标 ⚠️ 的是**真岔路**（不同选择导致不同的数据模型），其余是需要定值但方向明确的。
+**通道以 `(device_id, 通道国标编码)` 匹配：该二元组就是通道的「身份」。**
 
-### 4.1 通道的身份 ⚠️
+- 设备每次上报 Catalog，平台按通道国标编码在所属设备下查找已有行：找到 = 更新；找不到 = 新建。
+- 平台仍给每行发内部主键（`id`），供组织归属、录像、告警等外键引用——但匹配永不靠它。
+- **接受的代价**：摄像头恢复出厂 / 被重新分配编码后，平台视为全新通道，旧行的组织归属、（将来的）录像与告警记录**断链，不自动接续**（用户 2026-09-12 明确拍板：「恢复出厂则无解，断链就断了」）。恢复出厂在实际部署中是低频操作，不值得为此引入人工认领流程。
 
-- GB28181 通道有自己的 20 位国标编码。它在全局唯一，还是仅在所属设备内唯一？
-- 我们的主键用什么？设备重新上报时靠什么匹配到已有的那一行？
-- 若只能靠国标编码匹配：**设备恢复出厂导致编码变化时，该通道的组织归属、历史录像、告警记录全部断链**。要不要接受？有没有别的锚？
+## 3. 数据模型
 
-### 4.2 两个权威打架 ⚠️
+```
+channels
+  id                uuid PK                    -- 内部主键，外键引用用它
+  tenant_id         uuid NOT NULL              -- I3：与 devices/org_units 同租户
+  device_id         uuid NOT NULL              -- 所属设备
+  channel_code      varchar(20) NOT NULL       -- 通道国标编码（身份的一半）
+  report_name       text                       -- 设备上报的原始名称
+  display_name      text                       -- 平台自定义名；NULL = 用 report_name
+  org_unit_id       uuid NULL                  -- D36：NULL = 跟随设备
+  reported_status   varchar(8)                 -- 最近一次 Catalog 的 Status（ON/OFF）
+  missing           boolean NOT NULL DEFAULT false   -- D45：缺失标记
+  created_at / updated_at / last_seen_in_catalog_at
+  UNIQUE (device_id, channel_code)
+  复合外键 (org_unit_id, tenant_id) → org_units(id, tenant_id)   -- I3
+```
 
-同一行通道数据有两个来源：
+显示名称的规则：**`COALESCE(display_name, report_name)`**（D42）——与通道归属的 `COALESCE` 同一个模式，整套系统里「设备值 + 平台覆盖」只有一种做法。
 
-| 字段 | 权威 |
-|---|---|
-| 通道名称、厂商、型号、在线状态 | **设备上报**（Catalog） |
-| 组织归属、平台侧备注、启用状态 | **平台维护** |
+## 4. 字段权威（D42 / D43）
 
-设备把通道名从「大门」改成 `Channel 01`，平台侧老张手工起的名字要不要被覆盖？需要一条明确的裁决规则，否则每次同步都可能冲掉人工维护的数据。
+同一行通道数据有两个写入方，裁决规则：
 
-### 4.3 通道消失怎么办 ⚠️
+| 字段 | 权威 | 设备上报能否覆盖 |
+|---|---|---|
+| `channel_code`、设备级技术参数 | 设备 | （本身就是设备的） |
+| `report_name`、`reported_status` | 设备 | 每次完整同步刷新 |
+| `display_name`、`org_unit_id`、`missing` 的解除方式之外的标记 | 平台 | **永不** |
 
-摄像头拆了、线断了，设备不再上报这一路。
+- **D42 双列名称**：设备名（`report_name`）与平台名（`display_name`）各存各的。场景：运维小哥在 NVR 上把「大门口」改成 `Channel 01`，老张在平台备注的「大门口」不受影响，界面仍显示「大门口」。
+- **D43 增量字段保留旧值**：Catalog XML 字段不齐时，缺省的字段保留数据库旧值，不清 NULL。NULL 只表示「从未上报过」。
 
-- 删除？标记离线并保留？保留多久？
-- **删掉的话，挂在这条通道上的录像和告警指向谁？**
-- 归属信息留不留——重新接上时能不能自动复原？
+## 5. 同步的触发、完整性与流向（D47）
 
-（这是 `permission-model.md` §8 的开放问题 Q3，在此收口。）
+### 5.1 三个触发时机
 
-### 4.4 同步的触发与形态
+1. **设备注册成功后自动查一次**——新 NVR 上线即拉目录；
+2. **每小时定时轮询**所有在线设备（用户拍板的周期）；
+3. **界面手动「刷新目录」按钮**——小李刚加了摄像头可立即补拉。
 
-- 什么时候拉 Catalog：注册时？定时？手动？事件驱动？
-- 全量还是增量？如何判断「这次上报是完整的」（GB28181 Catalog 分批返回，可能丢包）？
-- 规模口径：一台 NVR 32 路，节点几千台设备 ≈ 十几万通道。全量对比的代价是多少？分页与批量写入策略。
+### 5.2 命令流向
 
-### 4.5 在线状态的单一来源
+```
+node-app ──JSON-RPC──> node-access: 发送 Catalog 查询
+device ──MESSAGE (Catalog, 分批)──> node-access（Kamailio gb28181 C 模块解析）
+node-access ──Redis Stream（沿用现有事件通道）──> node-app 消费入库
+```
 
-至少三个来源会声称知道通道是否在线：Catalog 的 `Status` 字段、设备级 KeepAlive、现有的 Redis 运行时投影。需要收敛成一个，并明确设备离线时其通道状态如何推导。
+通道数据是**上行**（access → app），**不经过**业务 outbox（`access_profile_outbox` 是设备 profile 下发专用，保持不变）。Catalog 事件走 node-access 已有的事件 Stream 通道（`nv:access:v1:events`），node-app 侧新增一类消费者。
 
-### 4.6 要不要支持嵌套目录
+### 5.3 分批完整性
 
-GB28181 的 Catalog 可以多级（平台 → 设备 → 通道），级联下级平台时更深（基线 §14 提到上下级级联，但排期很后）。现在要不要在数据模型上留口？留口的成本是多少？
+GB28181 Catalog 分多条 MESSAGE 返回，可能丢包。规则：**收齐一批次（按协议的分批序号/总数判定）才应用整体变更；未收齐的批次丢弃，该次同步视为未完成，不改动任何通道状态**——包括不产生「缺失」标记。这保证「一次没收到」永远不会误判缺失。
 
-### 4.7 与权限模型的接口
+## 6. 在线状态（D44）
 
-- 新上报的通道，`org_unit_id` 一律为 NULL（跟随设备）——确认；
-- 设备换组织时通道自动跟随（`COALESCE` 天然成立）——确认；
-- 通道表的 `tenant_id` 与复合外键形状（I3）。
+**设备与通道两层状态，各算各的：**
 
----
+- **设备（NVR）在线** = Keepalive，沿用现有 Redis 运行时投影（`device-runtime:{device_id}`），不变。
+- **通道在线** = 最近一次 Catalog 上报的 `Status`（ON/OFF），即 `channels.reported_status`。平台不做通道级独立检测。
 
-## 5. 明确不在本次范围
+场景：NVR 绿点活着，但它上报「第 3 路 OFF」→ 该通道显示离线；NVR 自己断了 → 设备灰点，其通道状态保留最后一次上报值（界面上跟随设备变灰即可，不回写通道行）。
 
-- INVITE/ACK/BYE 与媒体编排（下一个切片）
-- 录像、回放、下载
-- PTZ（基线 2026-08-17 D2 已移出阶段一）
-- 告警业务规则
-- 上下级级联的完整实现（仅讨论是否留数据模型的口）
+## 7. 生命周期：缺失与复活（D45 / D46）
 
----
+- **D45 通道永不删除，只标记**：某路通道从 Catalog 中彻底不再出现时，`missing = true`，行保留——组织归属、（将来的）录像与告警记录全部不断链，因为外键指向的行永远在。权限模型 D28/D29 以通道为授权锚点，物理删除会让悬挂外键成为常态，故排除。
+- **复活**：同 `(device_id, channel_code)` 的通道再次出现时，原行 `missing = false`，归属与历史自动接回。
+- **D46 缺失判定时机**：仅在**一次完整同步**（§5.3）结束后，该设备下出现过的通道若不在本次结果中，即标记缺失。不做「连续 N 次」缓冲——完整性已由 §5.3 保证，单次完整结果就是可信快照。
+  - 附带的 UX 说明：小李能在界面上区分「这路是 OFF（还在但掉线）」和「这路已缺失（设备不再承认它）」。
 
-## 6. 交叉引用
+## 8. 与权限模型的接口（确认项，照抄既有决策）
 
-- 权限模型：[`permission-model.md`](permission-model.md)（§2.8 设备与通道、§6 不变量、§8 开放问题 Q3）
-- 账号与登录：[`identity-and-auth.md`](identity-and-auth.md)
-- 架构基线：[`federated-video-platform-architecture.md`](federated-video-platform-architecture.md)（§6.2 服务边界、§7 调用流程、§15 分阶段实施）
-- 当前实现：[`../knowledge-base.md`](../knowledge-base.md)（§4 核心业务流程、§8 Kamailio 模块现状）
+- 新通道 `org_unit_id` 一律 NULL（跟随设备），UI 初期不提供单独入口——D36；
+- 设备换组织时其通道自动跟随（`COALESCE` 天然成立），无额外逻辑；
+- 通道表带 `tenant_id` + 复合外键，与设备表同形状——I3。
+
+## 9. 明确不做
+
+- **D48 不做嵌套目录、不留口**：模型固定两层（设备 → 通道）。上下级级联（基线 §14）若将来实施，届时按需新增结构（很可能是一张独立的目录节点表），现在加 `parent_id` 列属于臆测需求。
+- INVITE/媒体编排、录像、PTZ、告警业务规则——后续切片。
+- 通道级独立在线检测（D44 已排除）。
+
+## 9A. 前端页面形态（D49）
+
+**用户页面与管理页面分开，主语不同：**
+
+- **用户页面（看的人：小李、小王）——主语是通道。** 通道宫格列表，每路 = 在线圆点 + 通道名（`COALESCE(display_name, report_name)`）+ 位置一行灰字 + [播放] [录像]。不出现「设备/NVR」概念；组织以横排筛选片呈现，不要侧边树。
+- **管理页面（管的人：老张、小陈）——主语是设备。** 表格布局：设备名、国标编码、所属租户（**仅小陈可见**——老张永远只看本租户，该列对他是噪音）、所属组织、通道健康点阵、状态、行内操作。**保留侧边组织树**做嵌套筛选；「刷新目录」作为**行内按钮**（不放 ⋯ 菜单）。
+- **信息分层原则：正常状态零噪音。** Access 同步版本、SIP 用户名、心跳时间等进「⋯」详情抽屉；「心跳时间」仅在设备离线时升级为列表字段（「最后心跳 3 小时前」）。
+- **设备离线 ⇒ 其全部通道在用户页面显示为离线**（展示层推导，不回写 `reported_status`）；缺失通道在用户页面保留入口，可看历史录像，播放禁用。
+- 用户页面的播放/录像操作按权限点 `stream:play` / `record:*` 控制（permission-model D29）。
+- 交互 demo：`docs/design/device-page-demo.html`。
+
+## 10. 决策记录
+
+- **D41 通道身份 = (device_id, 通道国标编码)**；内部主键仅供外键；编码因恢复出厂而变 = 断链，接受。
+- **D42 名称双列**：`report_name`（设备权威）+ `display_name`（平台覆盖），显示用 `COALESCE(display_name, report_name)`。
+- **D43 未上报字段保留旧值**，NULL 只表示从未上报。
+- **D44 两层在线状态**：设备 = Keepalive 投影；通道 = 最近一次 Catalog Status。
+- **D45 通道永不物理删除**，只标 `missing`；同编码再现即复活。
+- **D46 缺失判定 = 单次完整同步即生效**；分批未收齐的同步整体丢弃、不算数。
+- **D47 三个同步触发**：注册即查 + 每小时定时 + 手动刷新。
+- **D48 不做嵌套目录**，不留 parent 口；级联将来另议。
+- **D49 双页面模型**：用户页面以通道为主语，管理页面以设备为主语；「所属租户」列仅平台运维可见；正常态不显示内部同步细节。
+
+## 11. 实现差距备注（2026-09-12 探查结论）
+
+- Kamailio gb28181 C 模块目前只处理 REGISTER 与 Keepalive MESSAGE，`CmdType=Catalog` 无任何分支（`deploy/kamailio/modules/gb28181/gb28181.c:1770-1808`）——需新增：解析 Catalog XML、发送查询请求、写事件 Stream。
+- 现有 outbox 是设备 profile 下发专用（`internal/nodeapp/sync/sync.go`），通道同步为上行方向，不复用、不改动它。
+- Redis 运行时投影只有设备级（`internal/nodeapp/access/projection.go`），无需为通道新增投影——通道状态落 PostgreSQL 即可。

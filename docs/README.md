@@ -15,7 +15,7 @@
 | [`design/identity-scope-refactor.md`](design/identity-scope-refactor.md) | 身份与权限模型重构：区域→组织单元 | 架构 |
 | [`design/permission-model.md`](design/permission-model.md) | 权限模型：数据权限、功能权限、租户套餐、权限点清单、审计 | 架构 |
 | [`design/identity-and-auth.md`](design/identity-and-auth.md) | 账号与登录：租户与账号生命周期、身份标识、登录方式、密码、会话与限流 | 架构 |
-| [`design/catalog-channel-model.md`](design/catalog-channel-model.md) | Catalog 与通道模型（⏳ 待讨论，仅课题提纲） | 架构 |
+| [`design/catalog-channel-model.md`](design/catalog-channel-model.md) | Catalog 与通道模型：设备目录同步、通道数据模型与生命周期 | 架构 |
 | [`knowledge-base.md`](knowledge-base.md) | 当前实现状态（从 working tree 生成，含已完成的业务逻辑与工程状态） | 工程 |
 
 ---
@@ -46,9 +46,11 @@
 ├── 用户名租户内唯一 + 邮箱手机全局唯一，登录撞名才问租户
 └── 密码策略、会话失效、登录限流
 
-Catalog 与通道 (catalog-channel-model.md)  ← ⏳ 下一个待讨论的课题
-├── 权限模型 D28/D36 已假设 channels 表存在，但代码里一行都没有
-└── 三个真岔路：通道身份 / 设备与平台两个权威 / 通道消失怎么办
+Catalog 与通道 (catalog-channel-model.md)  ← 设计已定稿，未实施
+├── 通道身份 = (device_id, 国标编码)；永不删除，只标缺失，复活自动接回
+├── 名称/权威裁决：设备上报与平台维护各存各的，COALESCE 合一显示
+├── 同步：注册即查 + 每小时轮询 + 手动刷新；上行走 Redis 事件流，不经 outbox
+└── 在线状态两层：设备 = Keepalive 投影，通道 = Catalog Status
 
 前端设计规范 (design-spec.md)
 ├── 范围：所有 Vue 页面的视觉规范

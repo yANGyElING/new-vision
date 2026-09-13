@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>设备/通道 · 双页面 demo（用户页 / 管理页）</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --ink: #1c1c1e; --sub: #82827f; --line: #e9e9e6;
+    --up: #34a26f; --down: #b4b4ae; --warn: #d9730d; --bad: #e03e3e; --blue: #337ea9;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  button { font: inherit; cursor: pointer; }
+
+  .tabs { display: flex; gap: 4px; background: #ededeb; padding: 4px; border-radius: 10px;
+          width: fit-content; margin: 18px auto 0; }
+  .tabs button { border: 0; padding: 7px 22px; border-radius: 8px; background: none;
+                 font-size: 13.5px; color: var(--sub); }
+  .tabs button.on { background: var(--card); color: var(--ink); font-weight: 600;
+                    box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .who { text-align: center; font-size: 12.5px; color: var(--sub); margin-top: 8px; }
+  .page { display: none; max-width: 1080px; margin: 0 auto; padding: 20px 28px 70px; }
+  .page.on { display: block; }
+
+  /* ---------- shared ---------- */
+  .topbar { display: flex; align-items: baseline; gap: 10px; margin: 14px 0 4px; }
+  h1 { font-size: 20px; margin: 0; }
+  .topbar .sub { font-size: 13px; color: var(--sub); }
+  .toolbar { display: flex; gap: 10px; align-items: center; margin: 14px 0; flex-wrap: wrap; }
+  .search input { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;
+                  background: var(--card); font-size: 13.5px; outline: none; width: 220px; }
+  select, .btn { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;
+                 background: var(--card); font-size: 13.5px; color: var(--ink); }
+  .btn.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .icon-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px;
+              border: 1px solid var(--line); background: var(--card); border-radius: 7px;
+              font-size: 12.5px; }
+  .icon-btn:hover { background: #f1f1ee; }
+  .icon-btn:disabled { opacity: .45; cursor: default; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot.on { background: var(--up); } .dot.off { background: var(--down); }
+
+  /* ---------- 用户页面：通道宫格 ---------- */
+  .org-chips { display: flex; gap: 8px; margin: 10px 0 16px; flex-wrap: wrap; }
+  .chip { padding: 5px 13px; border: 1px solid var(--line); border-radius: 999px;
+          background: var(--card); font-size: 13px; }
+  .chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .ch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(228px, 1fr)); gap: 12px; }
+  .ch-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+             padding: 14px 16px; }
+  .ch-card .loc { font-size: 12px; color: var(--sub); margin-bottom: 6px; }
+  .ch-card .nm { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .ch-card .acts { display: flex; gap: 8px; margin-top: 12px; }
+  .ch-card .acts .icon-btn { flex: 1; justify-content: center; }
+  .ch-card.dead { opacity: .6; }
+  .ch-card.dead .nm { color: var(--sub); }
+  .ch-card.dead .why { font-size: 12px; color: var(--sub); margin-top: 4px; }
+  .miss-tag { font-size: 12px; color: var(--bad); font-weight: 400; }
+
+  /* ---------- 管理页面：设备表 ---------- */
+  .layout { display: flex; gap: 0; align-items: flex-start; }
+  .sidebar { width: 210px; flex-shrink: 0; padding-right: 14px; }
+  .sidebar h3 { font-size: 12px; color: var(--sub); font-weight: 500; margin: 4px 8px 8px; }
+  .org-item { display: flex; width: 100%; padding: 6px 10px; border: 0; border-radius: 6px;
+              background: none; text-align: left; font-size: 13.5px; color: var(--ink); }
+  .org-item:hover { background: #f1f1ee; }
+  .org-item.active { background: #e9e9e6; font-weight: 600; }
+  .org-item .cnt { margin-left: auto; font-size: 12px; color: var(--sub); }
+  .org-item .ind { width: calc(var(--d) * 15px); flex-shrink: 0; }
+  table.dev { width: 100%; border-collapse: collapse; background: var(--card);
+              border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  table.dev th { text-align: left; font-size: 12px; color: var(--sub); font-weight: 500;
+                 padding: 10px 14px; border-bottom: 1px solid var(--line); background: #fbfbfa; }
+  table.dev td { padding: 11px 14px; border-bottom: 1px solid #f3f2f0; font-size: 13.5px;
+                 vertical-align: middle; }
+  table.dev tr:last-child td { border-bottom: 0; }
+  table.dev .nm { font-weight: 600; }
+  .mono { font-family: "SF Mono", ui-monospace, Consolas, monospace; font-size: 12px; color: var(--sub); }
+  .mini-dots { display: inline-flex; gap: 3px; vertical-align: middle; }
+  .mini-dots i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .warnline { font-size: 12px; color: var(--warn); }
+  .role-sw { font-size: 12.5px; color: var(--sub); display: flex; align-items: center; gap: 6px; }
+  .tenant-col { background: #fafbfd; }
+  .hidden { display: none !important; }
+  @media (max-width: 820px) { .sidebar { display: none; } }
+</style>
+</head>
+<body>
+
+<div class="tabs">
+  <button id="tabUser" class="on" onclick="showPage('user')">用户页面（看监控）</button>
+  <button id="tabAdmin" onclick="showPage('admin')">管理页面（管设备）</button>
+</div>
+<div class="who" id="whoLine">当前：小李 · 鼓楼片区主管 · 只看到自己范围内的通道</div>
+
+<!-- ================= 用户页面 ================= -->
+<section class="page on" id="page-user">
+  <div class="topbar"><h1>监控</h1><span class="sub">鼓楼片区 · 12 路通道</span></div>
+  <div class="toolbar">
+    <div class="search"><input placeholder="搜通道名"></div>
+    <select><option>全部状态</option><option>仅在线</option></select>
+  </div>
+  <div class="org-chips">
+    <button class="chip on">全部</button>
+    <button class="chip">五凤泵站</button>
+    <button class="chip">洪山桥泵站</button>
+  </div>
+
+  <div class="ch-grid">
+    <div class="ch-card">
+      <div class="loc">五凤泵站</div>
+      <div class="nm"><span class="dot on"></span>大门口</div>
+      <div class="acts"><button class="icon-btn">▶ 播放</button><button class="icon-btn">🎞 录像</button></div>
+    </div>
+    <div class="ch-card">
+      <div class="loc">五凤泵站</div>
+      <div class="nm"><span class="dot on"></span>泵房主视角</div>
+      <div class="acts"><button class="icon-btn">▶ 播放</button><button class="icon-btn">🎞 录像</button></div>
+    </div>
+    <div class="ch-card">
+      <div class="loc">五凤泵站 · 已缺失</div>
+      <div class="nm"><span class="dot off"></span>后院围墙 <span class="miss-tag">缺失</span></div>
+      <div class="acts"><button class="icon-btn" disabled>▶ 播放</button><button class="icon-btn">🎞 历史录像</button></div>
+    </div>
+    <div class="ch-card dead">
+      <div class="loc">苍霞泵站</div>
+      <div class="nm"><span class="dot off"></span>江堤枪机</div>
+      <div class="why">设备离线（3 小时）</div>
+      <div class="acts"><button class="icon-btn" disabled>▶ 播放</button><button class="icon-btn">🎞 历史录像</button></div>
+    </div>
+    <div class="ch-card">
+      <div class="loc">洪山桥泵站</div>
+      <div class="nm"><span class="dot on"></span>进水口</div>
+      <div class="acts"><button class="icon-btn">▶ 播放</button><button class="icon-btn">🎞 录像</button></div>
+    </div>
+    <div class="ch-card">
+      <div class="loc">洪山桥泵站</div>
+      <div class="nm"><span class="dot on"></span>出水口</div>
+      <div class="acts"><button class="icon-btn">▶ 播放</button><button class="icon-btn">🎞 录像</button></div>
+    </div>
+  </div>
+  <p style="font-size:12.5px;color:var(--sub);margin-top:18px">
+    说明：这里没有「NVR」这个词 → 小李的世界里只有通道。设备离线时其通道一律显示离线（展示层规则，由你上一轮拍板）；「缺失」的通道仍可查历史录像。
+  </p>
+</section>
+
+<!-- ================= 管理页面 ================= -->
+<section class="page" id="page-admin">
+  <div class="topbar">
+    <h1>设备管理</h1><span class="sub">4 台设备</span>
+    <span style="flex:1"></span>
+    <label class="role-sw">模拟身份：
+      <select id="roleSel" onchange="setRole(this.value)">
+        <option value="zhang">老张（租户管理员）</option>
+        <option value="chen">小陈（平台运维）</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <h3>组织</h3>
+      <button class="org-item active"><span class="ind" style="--d:0"></span>全部<span class="cnt">4</span></button>
+      <button class="org-item"><span class="ind" style="--d:1"></span>鼓楼片区<span class="cnt">2</span></button>
+      <button class="org-item"><span class="ind" style="--d:2"></span>五凤泵站<span class="cnt">1</span></button>
+      <button class="org-item"><span class="ind" style="--d:2"></span>洪山桥泵站<span class="cnt">1</span></button>
+      <button class="org-item"><span class="ind" style="--d:1"></span>台江片区<span class="cnt">1</span></button>
+      <button class="org-item"><span class="ind" style="--d:1"></span>第一水厂<span class="cnt">1</span></button>
+    </aside>
+
+    <div style="flex:1;min-width:0">
+      <div class="toolbar">
+        <div class="search"><input placeholder="搜设备名 / 国标编码"></div>
+        <select><option>全部状态</option><option>仅异常</option><option>在线</option><option>离线</option></select>
+        <span style="flex:1"></span>
+        <button class="btn primary">＋ 新建设备</button>
+      </div>
+
+      <table class="dev">
+        <thead><tr>
+          <th>设备</th><th>国标编码</th>
+          <th class="tenant-col hidden" data-role="chen">所属租户</th>
+          <th>所属组织</th><th>通道</th><th>状态</th><th style="text-align:right">操作</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="dot on" style="margin-right:8px"></span><span class="nm">五凤泵站机房 NVR</span> <span style="font-size:12px;color:var(--sub)">NVR</span></td>
+            <td class="mono">…0118000001</td>
+            <td class="tenant-col hidden" data-role="chen">福州水务集团</td>
+            <td>鼓楼片区/五凤泵站</td>
+            <td><span class="mini-dots"><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--down)"></i><i style="background:transparent;border:1.5px solid var(--bad);box-sizing:border-box"></i></span> 8 路</td>
+            <td><span style="color:var(--up)">在线</span><div class="warnline">1 路离线 · 1 路缺失</div></td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="icon-btn">通道</button>
+              <button class="icon-btn">↻ 刷新目录</button>
+              <button class="icon-btn">⋯</button>
+            </td>
+          </tr>
+          <tr>
+            <td><span class="dot on" style="margin-right:8px"></span><span class="nm">洪山桥泵站 NVR</span> <span style="font-size:12px;color:var(--sub)">NVR</span></td>
+            <td class="mono">…0118000002</td>
+            <td class="tenant-col hidden" data-role="chen">福州水务集团</td>
+            <td>鼓楼片区/洪山桥泵站</td>
+            <td><span class="mini-dots"><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i></span> 4 路</td>
+            <td><span style="color:var(--up)">在线</span></td>
+            <td style="text-align:right;white-space:nowrap"><button class="icon-btn">通道</button><button class="icon-btn">⋯</button></td>
+          </tr>
+          <tr style="opacity:.7">
+            <td><span class="dot off" style="margin-right:8px"></span><span class="nm">苍霞泵站枪机</span> <span style="font-size:12px;color:var(--sub)">IPC</span></td>
+            <td class="mono">…0132000009</td>
+            <td class="tenant-col hidden" data-role="chen">福州水务集团</td>
+            <td>台江片区/苍霞泵站</td>
+            <td><span class="mini-dots"><i style="background:var(--down)"></i></span> 1 路</td>
+            <td><span style="color:var(--sub)">离线</span><div style="font-size:12px;color:var(--sub)">最后心跳 3 小时前</div></td>
+            <td style="text-align:right;white-space:nowrap"><button class="icon-btn">通道</button><button class="icon-btn">⋯</button></td>
+          </tr>
+          <tr>
+            <td><span class="dot on" style="margin-right:8px"></span><span class="nm">第一水厂 NVR</span> <span style="font-size:12px;color:var(--sub)">NVR</span></td>
+            <td class="mono">…0118000007</td>
+            <td class="tenant-col hidden" data-role="chen">福州水务集团</td>
+            <td>第一水厂</td>
+            <td style="color:var(--sub);font-size:12.5px">正在获取目录…</td>
+            <td><span style="color:var(--up)">在线</span></td>
+            <td style="text-align:right;white-space:nowrap"><button class="icon-btn">通道</button><button class="icon-btn">⋯</button></td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="font-size:12.5px;color:var(--sub);margin-top:12px">
+        说明：「所属租户」列仅小陈（平台运维）可见 —— 右上角下拉切换到小陈试试；老张永远只看到本租户。
+        「通道」按钮进入该设备的通道明细页（v2 demo 里那个展开表的落地页）。
+      </p>
+    </div>
+  </div>
+</section>
+
+<script>
+function showPage(p) {
+  document.getElementById('page-user').classList.toggle('on', p === 'user');
+  document.getElementById('page-admin').classList.toggle('on', p === 'admin');
+  document.getElementById('tabUser').classList.toggle('on', p === 'user');
+  document.getElementById('tabAdmin').classList.toggle('on', p === 'admin');
+  document.getElementById('whoLine').textContent = p === 'user'
+    ? '当前：小李 · 鼓楼片区主管 · 只看到自己范围内的通道'
+    : '当前：老张/小陈 · 管理设备接入与归属';
+}
+function setRole(r) {
+  document.querySelectorAll('[data-role="chen"]').forEach(e => e.classList.toggle('hidden', r !== 'chen'));
+}
+</script>
+</body>
+</html>

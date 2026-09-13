@@ -13,7 +13,7 @@
 | [`identity-scope-refactor.md`](identity-scope-refactor.md) | 身份与权限模型重构：区域(Region)→组织单元(Org Unit)，去 Casbin | ✅ 已实现（D4/D5/D7 被 `permission-model.md` 推翻） | 2026-08-23 |
 | [`permission-model.md`](permission-model.md) | **权限模型：数据权限（组织树范围）、功能权限（角色/菜单）、租户套餐、权限点清单、审计** | ✅ 设计定稿 / ⏳ 未实施 | 2026-08-28 |
 | [`identity-and-auth.md`](identity-and-auth.md) | **账号与登录：租户与账号生命周期、身份标识、登录方式、密码、会话与限流** | ✅ 设计定稿 / ⏳ 未实施 | 2026-08-28 |
-| [`catalog-channel-model.md`](catalog-channel-model.md) | **Catalog 与通道模型：设备目录同步、通道数据模型与生命周期** | ⏳ **待讨论**（仅提纲，无已定设计） | 2026-08-29 |
+| [`catalog-channel-model.md`](catalog-channel-model.md) | **Catalog 与通道模型：设备目录同步、通道数据模型与生命周期** | ✅ 设计定稿 / ⏳ 未实施 | 2026-09-12 |
 | [`design-spec.md`](design-spec.md) | 前端设计规范（v2 iOS + Notion 系统风格） | ✅ 已确认基线 | — |
 
 ---
@@ -35,7 +35,7 @@
 | 区域为什么变成组织单元、为什么去掉 Casbin | `identity-scope-refactor.md` |
 | 前端页面风格、颜色 token、组件规范 | `design-spec.md` |
 | 当前已实现的代码行为 | `../knowledge-base.md` |
-| 通道/Catalog 的课题背景与待讨论问题 | `catalog-channel-model.md` |
+| 通道/Catalog 的设计（通道身份、缺失/复活、同步触发与频率、在线状态） | `catalog-channel-model.md` |
 | **已上线代码里待修的安全缺陷** | `permission-model.md` §9.1（对应不变量见 §6） |
 
 ---
