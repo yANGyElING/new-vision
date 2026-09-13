@@ -3,112 +3,266 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>设备/通道 · 双页面 demo（用户页 / 管理页）</title>
+<title>设备/通道 · 双页面 demo v4（Apple 设计语言 · 圆环进度）</title>
 <style>
   :root {
-    --bg: #f7f7f5; --card: #ffffff; --ink: #1c1c1e; --sub: #82827f; --line: #e9e9e6;
-    --up: #34a26f; --down: #b4b4ae; --warn: #d9730d; --bad: #e03e3e; --blue: #337ea9;
+    color-scheme: light dark;
+    --bg: #f5f5f7; --card: rgba(255,255,255,.78); --sidebar: rgba(255,255,255,.55);
+    --ink: #1d1d1f; --sub: #86868b; --line: rgba(0,0,0,.08);
+    --up: #34c759; --down: #b4b4ae; --warn: #ff9f0a; --bad: #ff453a; --blue: #0a84ff;
+    --fill: rgba(0,0,0,.05); --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.05);
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1e; --card: rgba(40,40,42,.72); --sidebar: rgba(40,40,42,.5);
+      --ink: #f5f5f7; --sub: #98989d; --line: rgba(255,255,255,.10);
+      --down: #5a5a5e; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+      --fill: rgba(255,255,255,.08);
+    }
   }
   * { box-sizing: border-box; }
+  html { -webkit-font-smoothing: antialiased; }
   body { margin: 0; background: var(--bg); color: var(--ink);
-         font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+         font: 15px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+         letter-spacing: 0; }
   button { font: inherit; cursor: pointer; }
 
-  .tabs { display: flex; gap: 4px; background: #ededeb; padding: 4px; border-radius: 10px;
-          width: fit-content; margin: 18px auto 0; }
-  .tabs button { border: 0; padding: 7px 22px; border-radius: 8px; background: none;
-                 font-size: 13.5px; color: var(--sub); }
-  .tabs button.on { background: var(--card); color: var(--ink); font-weight: 600;
-                    box-shadow: 0 1px 2px rgba(0,0,0,.06); }
-  .who { text-align: center; font-size: 12.5px; color: var(--sub); margin-top: 8px; }
-  .page { display: none; max-width: 1080px; margin: 0 auto; padding: 20px 28px 70px; }
+  /* ====== 段控制器（iOS Segmented） ====== */
+  .tabs { display: flex; gap: 2px; background: var(--fill); padding: 3px; border-radius: 10px;
+          width: fit-content; margin: 22px auto 0; }
+  .tabs button { border: 0; padding: 6px 20px; border-radius: 8px; background: none;
+                 font-size: 14px; font-weight: 500; color: var(--sub);
+                 transition: all .18s ease; }
+  .tabs button.on { background: var(--card); color: var(--ink);
+                    box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .who { text-align: center; font-size: 13px; color: var(--sub); margin-top: 10px; }
+  .page { display: none; max-width: 1060px; margin: 0 auto; padding: 18px 28px 80px; }
   .page.on { display: block; }
 
-  /* ---------- shared ---------- */
   .topbar { display: flex; align-items: baseline; gap: 10px; margin: 14px 0 4px; }
-  h1 { font-size: 20px; margin: 0; }
-  .topbar .sub { font-size: 13px; color: var(--sub); }
-  .toolbar { display: flex; gap: 10px; align-items: center; margin: 14px 0; flex-wrap: wrap; }
-  .search input { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;
-                  background: var(--card); font-size: 13.5px; outline: none; width: 220px; }
-  select, .btn { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;
-                 background: var(--card); font-size: 13.5px; color: var(--ink); }
-  .btn.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
-  .icon-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px;
-              border: 1px solid var(--line); background: var(--card); border-radius: 7px;
-              font-size: 12.5px; }
-  .icon-btn:hover { background: #f1f1ee; }
-  .icon-btn:disabled { opacity: .45; cursor: default; }
+  h1 { font-size: 28px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  .topbar .sub { font-size: 15px; color: var(--sub); }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; margin: 16px 0; flex-wrap: wrap; }
+  .search input { padding: 9px 13px; border: 1px solid var(--line); border-radius: 10px;
+                  background: var(--card); font-size: 14px; outline: none; width: 210px;
+                  color: var(--ink); backdrop-filter: blur(12px) saturate(180%); }
+  select, .btn { padding: 9px 14px; border: 1px solid var(--line); border-radius: 10px;
+                 background: var(--card); font-size: 14px; font-weight: 500; color: var(--ink);
+                 backdrop-filter: blur(12px) saturate(180%);
+                 transition: transform .1s ease, opacity .15s ease; }
+  .btn:active, select:active, .icon-btn:active { transform: scale(0.97); }
+  .btn.primary { background: var(--blue); color: #fff; border-color: transparent; }
+  .icon-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px;
+              border: 1px solid var(--line); background: var(--card); border-radius: 8px;
+              font-size: 13px; font-weight: 500; color: var(--ink);
+              backdrop-filter: blur(12px) saturate(180%);
+              transition: transform .1s ease, opacity .15s ease; }
+  .icon-btn:disabled { opacity: .45; cursor: default; transform: none; }
+  .icon-btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+  .icon-btn.accent { color: var(--blue); border-color: color-mix(in srgb, var(--blue) 35%, transparent); }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .dot.on { background: var(--up); } .dot.off { background: var(--down); }
+  .dot.on { background: var(--up); box-shadow: 0 0 6px color-mix(in srgb, var(--up) 60%, transparent); }
+  .dot.off { background: var(--down); }
 
-  /* ---------- 用户页面：通道宫格 ---------- */
-  .org-chips { display: flex; gap: 8px; margin: 10px 0 16px; flex-wrap: wrap; }
-  .chip { padding: 5px 13px; border: 1px solid var(--line); border-radius: 999px;
-          background: var(--card); font-size: 13px; }
-  .chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
-  .ch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(228px, 1fr)); gap: 12px; }
-  .ch-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-             padding: 14px 16px; }
-  .ch-card .loc { font-size: 12px; color: var(--sub); margin-bottom: 6px; }
-  .ch-card .nm { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 8px; }
-  .ch-card .acts { display: flex; gap: 8px; margin-top: 12px; }
+  /* ====== 圆环进度（核心新组件） ====== */
+  .ring { position: relative; display: inline-block; vertical-align: -3px; }
+  .ring svg { display: block; transform: rotate(-90deg); }
+  .ring .track { stroke: var(--fill); }
+  .ring .arc { stroke: var(--blue); stroke-linecap: round;
+               transition: stroke-dashoffset .35s cubic-bezier(0.32,0.72,0,1); }
+  .ring .tick { position: absolute; inset: 0; display: flex; align-items: center;
+                justify-content: center; font-size: 9px; font-weight: 600; color: var(--up);
+                opacity: 0; transform: scale(0.4);
+                transition: opacity .3s ease .12s, transform .45s cubic-bezier(0.34,1.2,0.28,1) .12s; }
+  .ring.done .tick { opacity: 1; transform: scale(1); }
+  .ring.done .arc { stroke: var(--up); stroke-dashoffset: 0 !important; }
+  .ring.fail .arc { stroke: var(--bad); }
+  .ring .pct { position: absolute; inset: 0; display: flex; align-items: center;
+               justify-content: center; font-size: 8.5px; font-weight: 600; color: var(--sub);
+               font-variant-numeric: tabular-nums; }
+  .ring.lg .pct { font-size: 11px; }
+
+  /* 同步状态文字 */
+  .sync-st { font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .sync-st .num { display: inline-block; text-align: right; font-variant-numeric: tabular-nums; }
+  .sync-st .pct { min-width: 3.6ch; }
+  .sync-st .cnt { min-width: 6.5ch; }
+  .sync-st.ok { color: var(--sub); }
+  .sync-st.ok b { color: var(--up); font-weight: 600; }
+  .sync-st.ing { color: var(--ink); }
+  .sync-st.bad { color: var(--bad); font-weight: 500; }
+  .sync-st.never { color: var(--warn); font-weight: 500; }
+
+  /* 用户页横幅 */
+  .banner { display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+            border-radius: 12px; font-size: 14px; margin-bottom: 14px;
+            backdrop-filter: blur(12px) saturate(180%); }
+  .banner.ing { background: color-mix(in srgb, var(--blue) 10%, var(--card)); color: var(--ink); }
+  .banner.bad { background: color-mix(in srgb, var(--bad) 9%, var(--card)); color: var(--ink); }
+  .banner .txt b { font-variant-numeric: tabular-nums; }
+  .banner .note { font-size: 12px; color: var(--sub); display: block; margin-top: 2px; }
+  .banner button { margin-left: auto; border: 0; background: none; color: var(--blue);
+                   text-decoration: none; font-size: 14px; font-weight: 500;
+                   padding: 6px 10px; border-radius: 8px; transition: transform .1s ease, background .15s ease; }
+  .banner button:active { transform: scale(0.97); background: var(--fill); }
+
+  /* 用户页通道宫格 */
+  .org-chips { display: flex; gap: 8px; margin: 10px 0 16px; flex-wrap: wrap; align-items: center; }
+  .chip { padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px;
+          background: var(--card); font-size: 13px; font-weight: 500;
+          backdrop-filter: blur(12px) saturate(180%);
+          transition: transform .1s ease, all .15s ease; }
+  .chip:active { transform: scale(0.96); }
+  .chip.on { background: var(--ink); color: var(--bg); border-color: transparent; }
+  .ch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+  .ch-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+             padding: 16px 18px; box-shadow: var(--shadow);
+             backdrop-filter: blur(12px) saturate(180%);
+             transition: transform .18s cubic-bezier(0.32,0.72,0,1), box-shadow .18s ease; }
+  .ch-card:hover { transform: translateY(-1px); }
+  .ch-card .loc { font-size: 13px; color: var(--sub); margin-bottom: 6px; }
+  .ch-card .nm { font-weight: 600; font-size: 17px; display: flex; align-items: center; gap: 8px; letter-spacing: -0.01em; }
+  .ch-card .acts { display: flex; gap: 8px; margin-top: 13px; }
   .ch-card .acts .icon-btn { flex: 1; justify-content: center; }
-  .ch-card.dead { opacity: .6; }
+  .ch-card.dead { opacity: .55; }
   .ch-card.dead .nm { color: var(--sub); }
-  .ch-card.dead .why { font-size: 12px; color: var(--sub); margin-top: 4px; }
-  .miss-tag { font-size: 12px; color: var(--bad); font-weight: 400; }
+  .ch-card.dead .why { font-size: 13px; color: var(--sub); margin-top: 4px; }
+  .miss-tag { font-size: 12px; color: var(--bad); font-weight: 500; }
+  .ch-card.skeleton { border-style: dashed; box-shadow: none; }
+  .ch-card.skeleton .bar { height: 16px; border-radius: 8px; background: var(--fill); margin-top: 10px;
+                           animation: shimmer 1.4s ease infinite; }
+  .ch-card.skeleton .bar.short { width: 55%; }
+  @keyframes shimmer { 0%,100% { opacity: 1 } 50% { opacity: .55 } }
 
-  /* ---------- 管理页面：设备表 ---------- */
+  /* 管理页 */
   .layout { display: flex; gap: 0; align-items: flex-start; }
-  .sidebar { width: 210px; flex-shrink: 0; padding-right: 14px; }
-  .sidebar h3 { font-size: 12px; color: var(--sub); font-weight: 500; margin: 4px 8px 8px; }
-  .org-item { display: flex; width: 100%; padding: 6px 10px; border: 0; border-radius: 6px;
-              background: none; text-align: left; font-size: 13.5px; color: var(--ink); }
-  .org-item:hover { background: #f1f1ee; }
-  .org-item.active { background: #e9e9e6; font-weight: 600; }
+  .sidebar { width: 200px; flex-shrink: 0; padding-right: 16px; }
+  .sidebar h3 { font-size: 12px; color: var(--sub); font-weight: 600; margin: 4px 8px 8px;
+                text-transform: none; letter-spacing: 0; }
+  .org-item { display: flex; width: 100%; padding: 7px 10px; border: 0; border-radius: 8px;
+              background: none; text-align: left; font-size: 14px; color: var(--ink);
+              transition: background .15s ease, transform .1s ease; }
+  .org-item:active { transform: scale(0.98); }
+  .org-item:hover { background: var(--fill); }
+  .org-item.active { background: var(--fill); font-weight: 600; }
   .org-item .cnt { margin-left: auto; font-size: 12px; color: var(--sub); }
-  .org-item .ind { width: calc(var(--d) * 15px); flex-shrink: 0; }
-  table.dev { width: 100%; border-collapse: collapse; background: var(--card);
-              border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  /* 树形结构：嵌套容器 + 左侧导轨线，不用肘部连接线 */
+  .org-item .chev { width: 13px; height: 13px; flex-shrink: 0; margin-right: 3px;
+    display: inline-flex; align-items: center; justify-content: center; }
+  .org-item .chev::before { content: ''; border: solid transparent;
+    border-width: 3.5px 0 3.5px 4.5px; border-left-color: var(--sub);
+    transform: rotate(0deg); transition: transform .18s cubic-bezier(0.32,0.72,0,1); }
+  .org-item.open > .chev::before { transform: rotate(90deg); }
+  .org-item.leaf .chev::before { border: none; width: 4px; height: 4px; border-radius: 50%;
+    background: color-mix(in srgb, var(--sub) 45%, transparent); }
+  .branch { margin-left: 6px; padding-left: 11px;
+    border-left: 1px solid color-mix(in srgb, var(--sub) 25%, transparent);
+    display: block; }
+  .branch.collapsed { display: none; }
+
+  table.dev { width: 100%; border-collapse: separate; border-spacing: 0;
+              background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+              overflow: hidden; box-shadow: var(--shadow);
+              backdrop-filter: blur(12px) saturate(180%); }
   table.dev th { text-align: left; font-size: 12px; color: var(--sub); font-weight: 500;
-                 padding: 10px 14px; border-bottom: 1px solid var(--line); background: #fbfbfa; }
-  table.dev td { padding: 11px 14px; border-bottom: 1px solid #f3f2f0; font-size: 13.5px;
+                 padding: 11px 14px; border-bottom: 1px solid var(--line);
+                 background: color-mix(in srgb, var(--fill) 50%, transparent); }
+  table.dev td { padding: 12px 14px; border-bottom: 1px solid var(--line); font-size: 14px;
                  vertical-align: middle; }
   table.dev tr:last-child td { border-bottom: 0; }
   table.dev .nm { font-weight: 600; }
   .mono { font-family: "SF Mono", ui-monospace, Consolas, monospace; font-size: 12px; color: var(--sub); }
   .mini-dots { display: inline-flex; gap: 3px; vertical-align: middle; }
   .mini-dots i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .mini-dots i.miss { background: transparent; border: 1.5px solid var(--bad); box-sizing: border-box; }
+  .ch-count { font-size: 12.5px; color: var(--sub); font-variant-numeric: tabular-nums; }
+  .ch-count .mut { color: var(--sub); }
+  .dev-status { position: relative; display: inline-flex; margin-right: 8px; }
+  .dev-status:hover::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 6px);
+    transform: translateX(-50%); background: var(--ink); color: var(--bg); font-size: 12px;
+    padding: 4px 9px; border-radius: 6px; white-space: nowrap; z-index: 5; }
   .warnline { font-size: 12px; color: var(--warn); }
-  .role-sw { font-size: 12.5px; color: var(--sub); display: flex; align-items: center; gap: 6px; }
-  .tenant-col { background: #fafbfd; }
+  .role-sw { font-size: 13px; color: var(--sub); display: flex; align-items: center; gap: 6px; }
+  .tenant-col { background: color-mix(in srgb, #0a84ff 4%, transparent); }
   .hidden { display: none !important; }
+
+  .demo-note { margin: 18px 0 0; padding: 14px 18px; border: 1px dashed var(--line);
+               border-radius: 12px; background: var(--card); font-size: 13px; color: var(--sub);
+               backdrop-filter: blur(12px) saturate(180%); }
+  .demo-note b { color: var(--ink); }
+
+  /* 减动效 */
+  @media (prefers-reduced-motion: reduce) {
+    .ring .arc { transition: stroke-dashoffset .2s linear; }
+    .ring .tick { transition: opacity .15s ease; }
+    .ch-card, .ch-card:hover { transform: none; }
+    .ch-card.skeleton .bar { animation: none; }
+    * { transition-duration: .01s !important; }
+  }
   @media (max-width: 820px) { .sidebar { display: none; } }
 </style>
 </head>
 <body>
 
+<!-- 圆环模板：JS 生成。用法 ring(16, 0.625) -->
+<script>
+function ring(size, p /*0..1*/, id, showPct) {
+  const r = size/2 - 2, C = 2*Math.PI*r;
+  return `<span class="ring" ${id?`id="${id}"`:''} style="width:${size}px;height:${size}px">` +
+    `<svg width="${size}" height="${size}">` +
+    `<circle class="track" cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke-width="2.5"/>` +
+    `<circle class="arc" cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke-width="2.5" ` +
+    `stroke-dasharray="${C}" stroke-dashoffset="${C*(1-p)}"/></svg>` +
+    (showPct ? `<span class="pct">${Math.round(p*100)}</span>` : '') +
+    `<span class="tick">✓</span></span>`;
+}
+</script>
+
 <div class="tabs">
-  <button id="tabUser" class="on" onclick="showPage('user')">用户页面（看监控）</button>
-  <button id="tabAdmin" onclick="showPage('admin')">管理页面（管设备）</button>
+  <button id="tabUser" class="on" onclick="showPage('user')">用户页面（小李）</button>
+  <button id="tabAdmin" onclick="showPage('admin')">管理页面（老张/小陈）</button>
 </div>
-<div class="who" id="whoLine">当前：小李 · 鼓楼片区主管 · 只看到自己范围内的通道</div>
+<div class="who" id="whoLine">圆环进度 · Apple 设计语言 · 自动适配暗色</div>
 
 <!-- ================= 用户页面 ================= -->
 <section class="page on" id="page-user">
   <div class="topbar"><h1>监控</h1><span class="sub">鼓楼片区 · 12 路通道</span></div>
+
   <div class="toolbar">
     <div class="search"><input placeholder="搜通道名"></div>
     <select><option>全部状态</option><option>仅在线</option></select>
-  </div>
-  <div class="org-chips">
-    <button class="chip on">全部</button>
-    <button class="chip">五凤泵站</button>
-    <button class="chip">洪山桥泵站</button>
+    <span style="flex:1"></span>
+    <button class="btn" id="userSyncBtn" onclick="userSyncDemo()">↻ 更新通道列表</button>
   </div>
 
-  <div class="ch-grid">
+  <div class="demo-note" style="margin:0 0 12px">
+    演示切换用户页同步状态：
+    <select id="userSyncState" onchange="userSyncState(this.value)">
+      <option value="ok">已同步（不显示任何东西）</option>
+      <option value="ing">同步中（横幅 + 圆环）</option>
+      <option value="bad">失败了（横幅 + 重试）</option>
+      <option value="never">从未同步（骨架占位）</option>
+    </select>
+    <button class="btn" style="padding:5px 12px;font-size:13px" onclick="userProgressDemo()">▶ 演示进度推进</button>
+  </div>
+
+  <div class="banner ing hidden" id="ub-ing">
+    <span id="ub-ring"></span>
+    <div class="txt">正在获取最新通道列表<b id="ub-ing-text"></b>
+      <span class="note">已连接设备正常播放不受影响</span></div>
+  </div>
+  <div class="banner bad hidden" id="ub-bad">
+    <div class="txt">通道列表更新失败<span class="note">显示的是 11:00 的版本</span></div>
+    <button onclick="userSyncDemo()">重试</button>
+  </div>
+
+  <div class="org-chips">
+    <button class="chip on">全部</button><button class="chip">五凤泵站</button><button class="chip">洪山桥泵站</button>
+  </div>
+
+  <div class="ch-grid" id="grid-ok">
     <div class="ch-card">
       <div class="loc">五凤泵站</div>
       <div class="nm"><span class="dot on"></span>大门口</div>
@@ -130,20 +284,13 @@
       <div class="why">设备离线（3 小时）</div>
       <div class="acts"><button class="icon-btn" disabled>▶ 播放</button><button class="icon-btn">🎞 历史录像</button></div>
     </div>
-    <div class="ch-card">
-      <div class="loc">洪山桥泵站</div>
-      <div class="nm"><span class="dot on"></span>进水口</div>
-      <div class="acts"><button class="icon-btn">▶ 播放</button><button class="icon-btn">🎞 录像</button></div>
-    </div>
-    <div class="ch-card">
-      <div class="loc">洪山桥泵站</div>
-      <div class="nm"><span class="dot on"></span>出水口</div>
-      <div class="acts"><button class="icon-btn">▶ 播放</button><button class="icon-btn">🎞 录像</button></div>
-    </div>
   </div>
-  <p style="font-size:12.5px;color:var(--sub);margin-top:18px">
-    说明：这里没有「NVR」这个词 → 小李的世界里只有通道。设备离线时其通道一律显示离线（展示层规则，由你上一轮拍板）；「缺失」的通道仍可查历史录像。
-  </p>
+
+  <div class="ch-grid hidden" id="grid-never">
+    <div class="ch-card skeleton"><div class="loc">五凤泵站</div><div class="bar"></div><div class="bar short"></div></div>
+    <div class="ch-card skeleton"><div class="loc">五凤泵站</div><div class="bar"></div><div class="bar short"></div></div>
+    <div class="ch-card skeleton"><div class="loc">洪山桥泵站</div><div class="bar"></div><div class="bar short"></div></div>
+  </div>
 </section>
 
 <!-- ================= 管理页面 ================= -->
@@ -162,18 +309,22 @@
   <div class="layout">
     <aside class="sidebar">
       <h3>组织</h3>
-      <button class="org-item active"><span class="ind" style="--d:0"></span>全部<span class="cnt">4</span></button>
-      <button class="org-item"><span class="ind" style="--d:1"></span>鼓楼片区<span class="cnt">2</span></button>
-      <button class="org-item"><span class="ind" style="--d:2"></span>五凤泵站<span class="cnt">1</span></button>
-      <button class="org-item"><span class="ind" style="--d:2"></span>洪山桥泵站<span class="cnt">1</span></button>
-      <button class="org-item"><span class="ind" style="--d:1"></span>台江片区<span class="cnt">1</span></button>
-      <button class="org-item"><span class="ind" style="--d:1"></span>第一水厂<span class="cnt">1</span></button>
+      <nav class="tree">
+        <button class="org-item active" onclick="orgPick(this)"><span class="chev"></span>全部<span class="cnt">4</span></button>
+        <button class="org-item open" onclick="orgPick(this); orgToggle('br-gulu', this)"><span class="chev"></span>鼓楼片区<span class="cnt">2</span></button>
+        <div class="branch" id="br-gulu">
+          <button class="org-item leaf" onclick="orgPick(this)"><span class="chev"></span>五凤泵站<span class="cnt">1</span></button>
+          <button class="org-item leaf" onclick="orgPick(this)"><span class="chev"></span>洪山桥泵站<span class="cnt">1</span></button>
+        </div>
+        <button class="org-item leaf" onclick="orgPick(this)"><span class="chev"></span>台江片区<span class="cnt">1</span></button>
+        <button class="org-item leaf" onclick="orgPick(this)"><span class="chev"></span>第一水厂<span class="cnt">1</span></button>
+      </nav>
     </aside>
 
     <div style="flex:1;min-width:0">
       <div class="toolbar">
         <div class="search"><input placeholder="搜设备名 / 国标编码"></div>
-        <select><option>全部状态</option><option>仅异常</option><option>在线</option><option>离线</option></select>
+        <select><option>全部状态</option><option>目录异常</option><option>在线</option><option>离线</option></select>
         <span style="flex:1"></span>
         <button class="btn primary">＋ 新建设备</button>
       </div>
@@ -182,71 +333,183 @@
         <thead><tr>
           <th>设备</th><th>国标编码</th>
           <th class="tenant-col hidden" data-role="chen">所属租户</th>
-          <th>所属组织</th><th>通道</th><th>状态</th><th style="text-align:right">操作</th>
+          <th>所属组织</th><th>通道</th><th>目录同步</th><th style="text-align:right">操作</th>
         </tr></thead>
         <tbody>
+          <!-- 1. 已同步 -->
           <tr>
             <td><span class="dot on" style="margin-right:8px"></span><span class="nm">五凤泵站机房 NVR</span> <span style="font-size:12px;color:var(--sub)">NVR</span></td>
             <td class="mono">…0118000001</td>
             <td class="tenant-col hidden" data-role="chen">福州水务集团</td>
-            <td>鼓楼片区/五凤泵站</td>
-            <td><span class="mini-dots"><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--down)"></i><i style="background:transparent;border:1.5px solid var(--bad);box-sizing:border-box"></i></span> 8 路</td>
-            <td><span style="color:var(--up)">在线</span><div class="warnline">1 路离线 · 1 路缺失</div></td>
+            <td>五凤泵站</td>
+            <td><span class="mini-dots"><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--down)"></i><i class="miss"></i></span> <span class="ch-count"><span class="num pct" style="min-width:0">7/8</span> 在线</span></td>
+            <td><span class="sync-st ok" id="st-td-ok"><b>✓</b> 11:00 · 8 路</span></td>
             <td style="text-align:right;white-space:nowrap">
-              <button class="icon-btn">通道</button>
-              <button class="icon-btn">↻ 刷新目录</button>
+              <button class="icon-btn" id="btn-ok" onclick="adminSyncDemo('ok')">↻ 刷新目录</button>
               <button class="icon-btn">⋯</button>
             </td>
           </tr>
+          <!-- 2. 同步中：圆环 62.5% -->
           <tr>
             <td><span class="dot on" style="margin-right:8px"></span><span class="nm">洪山桥泵站 NVR</span> <span style="font-size:12px;color:var(--sub)">NVR</span></td>
             <td class="mono">…0118000002</td>
             <td class="tenant-col hidden" data-role="chen">福州水务集团</td>
-            <td>鼓楼片区/洪山桥泵站</td>
-            <td><span class="mini-dots"><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i></span> 4 路</td>
-            <td><span style="color:var(--up)">在线</span></td>
-            <td style="text-align:right;white-space:nowrap"><button class="icon-btn">通道</button><button class="icon-btn">⋯</button></td>
+            <td>洪山桥泵站</td>
+            <td><span class="mini-dots"><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i><i style="background:var(--up)"></i></span> <span class="ch-count"><span class="num pct" style="min-width:0">4/4</span> 在线</span></td>
+            <td><span style="display:inline-flex;align-items:center;gap:8px">
+              <span id="row2-ring"></span>
+              <span class="sync-st ing" id="st-ing"><span class="num pct">62%</span> · <span class="num cnt">20/32 路</span></span></span>
+            </td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="icon-btn" disabled>同步中…</button>
+              <button class="icon-btn">⋯</button>
+            </td>
           </tr>
-          <tr style="opacity:.7">
-            <td><span class="dot off" style="margin-right:8px"></span><span class="nm">苍霞泵站枪机</span> <span style="font-size:12px;color:var(--sub)">IPC</span></td>
-            <td class="mono">…0132000009</td>
-            <td class="tenant-col hidden" data-role="chen">福州水务集团</td>
-            <td>台江片区/苍霞泵站</td>
-            <td><span class="mini-dots"><i style="background:var(--down)"></i></span> 1 路</td>
-            <td><span style="color:var(--sub)">离线</span><div style="font-size:12px;color:var(--sub)">最后心跳 3 小时前</div></td>
-            <td style="text-align:right;white-space:nowrap"><button class="icon-btn">通道</button><button class="icon-btn">⋯</button></td>
-          </tr>
+          <!-- 3. 失败：停在 81% -->
           <tr>
             <td><span class="dot on" style="margin-right:8px"></span><span class="nm">第一水厂 NVR</span> <span style="font-size:12px;color:var(--sub)">NVR</span></td>
             <td class="mono">…0118000007</td>
             <td class="tenant-col hidden" data-role="chen">福州水务集团</td>
             <td>第一水厂</td>
-            <td style="color:var(--sub);font-size:12.5px">正在获取目录…</td>
-            <td><span style="color:var(--up)">在线</span></td>
-            <td style="text-align:right;white-space:nowrap"><button class="icon-btn">通道</button><button class="icon-btn">⋯</button></td>
+            <td><span class="mini-dots"><i style="background:var(--down)"></i><i style="background:var(--down)"></i></span> <span class="ch-count"><span class="num pct" style="min-width:0">0/2</span> 在线 <span class="mut">· 11:00 版本</span></span></td>
+            <td><span style="display:inline-flex;align-items:center;gap:8px">
+              <span class="ring fail" style="width:16px;height:16px" id="row3-ring"></span>
+              <span class="sync-st bad">12:04 超时 · <span class="num pct">81%</span> · <span class="num cnt">26/32 路</span></span>
+            </td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="icon-btn danger">↻ 重试</button>
+              <button class="icon-btn">⋯</button>
+            </td>
+          </tr>
+          <!-- 4. 从未同步 -->
+          <tr>
+            <td><span class="dev-status" data-tip="注册于 3 分钟前"><span class="dot on"></span></span><span class="nm">苍霞泵站枪机</span> <span style="font-size:12px;color:var(--sub)">IPC</span></td>
+            <td class="mono">…0132000009</td>
+            <td class="tenant-col hidden" data-role="chen">福州水务集团</td>
+            <td>苍霞泵站</td>
+            <td style="color:var(--sub);font-size:13px">—</td>
+            <td><span class="sync-st never" data-tip="目录从未同步">—</span></td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="icon-btn">↻ 刷新目录</button>
+              <button class="icon-btn">⋯</button>
+            </td>
           </tr>
         </tbody>
       </table>
-      <p style="font-size:12.5px;color:var(--sub);margin-top:12px">
-        说明：「所属租户」列仅小陈（平台运维）可见 —— 右上角下拉切换到小陈试试；老张永远只看到本租户。
-        「通道」按钮进入该设备的通道明细页（v2 demo 里那个展开表的落地页）。
-      </p>
+
+      <div class="demo-note">
+        <b>设计语言要点（本页已实现）：</b><br>
+        ① 圆环进度：16px 直径、线宽 2.5、12 点钟起弧、圆头；文字只显示「百分比 · 实收/预计路数」；<b>完成时弧收拢为满环 + ✓ 回弹浮现（450ms）</b>，不跳变；失败时弧保持停止位置、变红。<br>
+        ② 所有按钮 :active 缩放 0.97 + 100ms；卡片 hover 微抬 1px；骨架 shimmer。<br>
+        ③ 毛玻璃卡片（blur 12 + saturate 180%）；大标题 28px/-0.01em；正文 15px；辅助 12–13px；数字等宽 tabular-nums。<br>
+        ④ 从未同步的设备：两列都显示「—」，不给文案不给引导按钮——统一用行内「↻ 刷新目录」；「注册于 3 分钟前」收进在线圆点的 hover tooltip。<br>
+        ⑤ 自动暗色（系统跟随）；prefers-reduced-motion 时所有位移动画退化为透明度。<br>
+        ⑥ 进度数字（20/32）按 Apple 语言本应省略——本 demo 暂时保留在管理页（表格行有空间），用户页横幅只有圆环没有数字。
+      </div>
     </div>
   </div>
 </section>
 
 <script>
+/* —— 初始化静态圆环 —— */
+document.getElementById('row2-ring').innerHTML = ringSvg(16, 20/32, false);
+document.getElementById('row3-ring').innerHTML = ringSvg(16, 26/32, false);
+document.getElementById('row3-ring').classList.add('fail');
+
+function ringSvg(size, p, showPct) {
+  const r = size/2 - 2, C = 2*Math.PI*r;
+  return `<svg width="${size}" height="${size}" style="transform:rotate(-90deg)">
+    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--fill)" stroke-width="2.5"/>
+    <circle class="arc" cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--blue)" stroke-width="2.5"
+      stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C*(1-p)}"/></svg>`;
+}
+
 function showPage(p) {
   document.getElementById('page-user').classList.toggle('on', p === 'user');
   document.getElementById('page-admin').classList.toggle('on', p === 'admin');
   document.getElementById('tabUser').classList.toggle('on', p === 'user');
   document.getElementById('tabAdmin').classList.toggle('on', p === 'admin');
   document.getElementById('whoLine').textContent = p === 'user'
-    ? '当前：小李 · 鼓楼片区主管 · 只看到自己范围内的通道'
-    : '当前：老张/小陈 · 管理设备接入与归属';
+    ? '圆环进度 · 用户页只说人话（无数字）'
+    : '目录同步：✓ / 圆环+数字 / ✗ 停止位红环 / —（从未同步）';
 }
 function setRole(r) {
   document.querySelectorAll('[data-role="chen"]').forEach(e => e.classList.toggle('hidden', r !== 'chen'));
+}
+function orgPick(el) {
+  document.querySelectorAll('.org-item').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+}
+function orgToggle(branchId, el) {
+  const br = document.getElementById(branchId);
+  const collapsed = br.classList.toggle('collapsed');
+  el.classList.toggle('open', !collapsed);
+}
+
+/* —— 管理页：模拟 SSE 驱动的圆环推进 —— */
+function adminSyncDemo(which) {
+  const td = document.getElementById('st-td-' + which);
+  const btn = document.getElementById('btn-' + which);
+  btn.disabled = true; btn.textContent = '同步中…';
+  td.innerHTML = `<span style="display:inline-flex;align-items:center;gap:8px">
+      <span id="live-ring"></span><span class="sync-st ing" id="live-label"><span class="num pct">0%</span> · <span class="num cnt" id="live-cnt">0/32 路</span></span></span>`;
+  const holder = document.getElementById('live-ring');
+  const label = document.getElementById('live-label');
+  const TOTAL = 32; let got = 0, first = true;
+  const setP = p => { holder.innerHTML = ringSvg(16, p); };
+  const setLabel = () => {
+    const pct = Math.round(got/TOTAL*100);
+    label.querySelector('.pct').textContent = pct + '%';
+    label.querySelector('.cnt').textContent = got + '/' + TOTAL + ' 路';
+  };
+  setP(0); setLabel();
+  const tick = () => {
+    got += first ? 1 : Math.ceil(Math.random()*5);
+    if (got > TOTAL) got = TOTAL;
+    setP(got/TOTAL); setLabel();
+    first = false;
+    if (got >= TOTAL) {
+      // 弧收拢为满环 + ✓ 回弹
+      holder.classList.add('done');
+      holder.querySelector('.arc').style.strokeDashoffset = 0;
+      setTimeout(() => {
+        td.innerHTML = `<span class="sync-st ok"><b>✓</b> 刚刚 · ${TOTAL} 路</span>`;
+        btn.disabled = false; btn.textContent = '↻ 刷新目录';
+      }, 650);
+    } else setTimeout(tick, 240 + Math.random()*180);
+  };
+  setTimeout(tick, 700);
+}
+
+/* —— 用户页状态切换 —— */
+function userSyncState(v) {
+  document.getElementById('ub-ing').classList.toggle('hidden', v !== 'ing');
+  document.getElementById('ub-bad').classList.toggle('hidden', v !== 'bad');
+  document.getElementById('grid-ok').classList.toggle('hidden', v === 'never');
+  document.getElementById('grid-never').classList.toggle('hidden', v !== 'never');
+}
+function userSyncDemo() {
+  document.getElementById('userSyncState').value = 'ing'; userSyncState('ing');
+  userProgressDemo();
+}
+function userProgressDemo() {
+  const holder = document.getElementById('ub-ring');
+  const txt = document.getElementById('ub-ing-text');
+  const TOTAL = 38; let got = 0;
+  const step = () => {
+    got += Math.ceil(Math.random()*6);
+    if (got > TOTAL) got = TOTAL;
+    holder.innerHTML = ringSvg(24, got/TOTAL);
+    txt.textContent = '';
+    if (got < TOTAL) setTimeout(step, 220 + Math.random()*220);
+    else {
+      holder.classList.add('done');
+      holder.querySelector('.arc').style.strokeDashoffset = 0;
+      setTimeout(() => { document.getElementById('userSyncState').value = 'ok'; userSyncState('ok'); }, 700);
+    }
+  };
+  holder.classList.remove('done');
+  step();
 }
 </script>
 </body>
