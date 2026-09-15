@@ -178,7 +178,7 @@ LEFT JOIN org_units ou ON ou.id = COALESCE(c.org_unit_id, d.org_unit_id)`
 	}
 	channelRows, err := r.pool.Query(ctx, `SELECT c.id, c.device_id, c.channel_code, c.report_name, c.display_name,
  c.reported_status, c.missing, c.last_seen_in_catalog_at,
- COALESCE(c.org_unit_id, d.org_unit_id), ou.name`+base+where+` ORDER BY d.device_access_id, c.channel_code`, args...)
+ COALESCE(c.org_unit_id, d.org_unit_id), ou.name`+base+where+` AND c.id IS NOT NULL ORDER BY d.device_access_id, c.channel_code`, args...)
 	if err != nil {
 		return CatalogListResult{}, err
 	}

@@ -126,8 +126,16 @@ const viewer = await api('POST', '/api/v1/users', {
 report('create scoped viewer -> 201', viewer.status === 201 && !!viewer.json?.id, `status=${viewer.status} body=${viewer.text?.slice(0, 120)}`)
 
 // ---------- B. multi-frame catalog -> progress + result ----------
-// SN=1 分两帧：第一帧 1 路，第二帧 1 路；SumNum=2。设备未注册也允许上报（MESSAGE 只查 profile）。
+// 设备创建后 profile 需要由 sync runner 推送到 node-access（Redis）；
+// 在那之前 MESSAGE 会被拒 403。等 access 同步完成再发帧。
 const sipRealm = dev?.sip_realm ?? '3402000000'
+const profileReady = await waitFor(async () => {
+  const res = await api('GET', `/api/v1/devices/${deviceID}`, { token: adminToken })
+  return res.json?.access_sync_status === 'synced' ? true : null
+}, { tries: 30, intervalMs: 500 })
+report('device profile pushed to access (synced)', !!profileReady, `status=${device.json?.access_sync_status}`)
+
+// SN=1 分两帧：第一帧 1 路，第二帧 1 路；SumNum=2。设备未注册也允许上报（MESSAGE 只查 profile）。
 const r1 = await sendCatalog(accessID, sipRealm, 1, 2, [CH1])
 report('catalog frame 1 -> 200', /200/.test(r1 ?? ''), `resp=${r1}`)
 const r2 = await sendCatalog(accessID, sipRealm, 1, 2, [CH2])
@@ -196,7 +204,12 @@ const foreignDevice = await api('POST', '/api/v1/devices', {
   token: adminToken,
   body: { org_unit_id: otherOrg.json?.id, center_code: '34020000', device_type: '132', device_name: 'e2e-other', manufacturer: 'e2e', sip_realm: '3402000000', password: 'catalog-e2e-pass', enabled: true },
 })
+await waitFor(async () => {
+  const res = await api('GET', `/api/v1/devices/${foreignDevice.json?.id}`, { token: adminToken })
+  return res.json?.access_sync_status === 'synced' ? true : null
+}, { tries: 30, intervalMs: 500 })
 const foreignAccess = await sendCatalog(foreignDevice.json?.device_access_id, sipRealm, 1, 1, [{ code: '34020000001320000201', name: '他方通道', status: 'ON' }])
+report('foreign device catalog frame -> 200', /200/.test(foreignAccess ?? ''), `resp=${foreignAccess}`)
 await waitFor(async () => {
   const res = await api('GET', `/api/v1/devices/${foreignDevice.json?.id}/channels`, { token: adminToken })
   return res.json?.catalog_state === 'ok'
@@ -207,13 +220,21 @@ const viewerAll = await api('GET', '/api/v1/channels', { token: viewerToken })
 report('viewer flat list still excludes foreign org channels', (viewerAll.json?.channels ?? []).every((c) => c.org_unit_id !== otherOrg.json?.id),
   `count=${viewerAll.json?.channels?.length}`)
 
-// admin 全量可见
+// admin 全量可见；范围里还挂着未同步过目录的设备（无通道行，不得炸列表）
+const bareDevice = await api('POST', '/api/v1/devices', {
+  token: adminToken,
+  body: { org_unit_id: org.json?.id, center_code: '34020000', device_type: '132', device_name: 'e2e-never-synced', manufacturer: 'e2e', sip_realm: '3402000000', password: 'catalog-e2e-pass', enabled: true },
+})
 const adminList = await api('GET', '/api/v1/channels', { token: adminToken })
-report('node_admin sees all tenant channels', (adminList.json?.channels ?? []).length >= 3, `count=${adminList.json?.channels?.length}`)
+report('node_admin sees all tenant channels (incl. channel-less devices)', adminList.status === 200 && (adminList.json?.channels ?? []).length >= 3,
+  `status=${adminList.status} count=${adminList.json?.channels?.length} devices=${adminList.json?.devices?.length}`)
+const bareBrief = (adminList.json?.devices ?? []).find((d) => d.id === bareDevice.json?.id)
+report('never-synced device appears as brief (catalog_state=never)', bareBrief?.catalog_state === 'never', `brief=${JSON.stringify(bareBrief)}`)
 
 // ---------- F. cleanup ----------
 await api('DELETE', `/api/v1/devices/${deviceID}`, { token: adminToken })
 await api('DELETE', `/api/v1/devices/${foreignDevice.json?.id}`, { token: adminToken })
+await api('DELETE', `/api/v1/devices/${bareDevice.json?.id}`, { token: adminToken })
 await api('DELETE', `/api/v1/users/${viewer.json?.id}`, { token: adminToken })
 await api('DELETE', `/api/v1/org-units/${org.json?.id}`, { token: adminToken })
 await api('DELETE', `/api/v1/org-units/${otherOrg.json?.id}`, { token: adminToken })
