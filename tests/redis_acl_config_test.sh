@@ -2,7 +2,7 @@
 set -eu
 
 compose=compose.yaml
-projection=internal/nodeapp/projection.go
+projection=internal/nodeapp/access/projection.go
 
 line=$(grep -F 'exec redis-server' "$compose")
 nodeapp_acl=$(printf '%s\n' "$line" | sed -e 's/.*--user nodeapp //' -e 's/ --user access.*//')
