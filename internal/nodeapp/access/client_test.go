@@ -26,8 +26,15 @@ func TestAccessClientDecodesOfflineEventWithoutExpiresAt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Events) != 1 || !result.Events[0].Payload.ExpiresAt.IsZero() {
-		t.Fatalf("offline event did not decode as an absent optional expiry: %#v", result.Events)
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %#v", result.Events)
+	}
+	var payload AccessEventPayload
+	if err := json.Unmarshal(result.Events[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.State != "offline" || !payload.ExpiresAt.IsZero() {
+		t.Fatalf("offline event did not decode as an absent optional expiry: %#v", payload)
 	}
 }
 

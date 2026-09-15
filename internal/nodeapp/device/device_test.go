@@ -39,15 +39,15 @@ func TestCreateDeviceValidation(t *testing.T) {
 	}
 	badOrg := "not-a-uuid"
 	for name, input := range map[string]CreateDeviceInput{
-		"bad org":            validWith(valid, func(v *CreateDeviceInput) { v.OrgUnitID = &badOrg }),
-		"short center code":  validWith(valid, func(v *CreateDeviceInput) { v.CenterCode = "3402000" }),
-		"non-digit center":   validWith(valid, func(v *CreateDeviceInput) { v.CenterCode = "3402000a" }),
+		"bad org":             validWith(valid, func(v *CreateDeviceInput) { v.OrgUnitID = &badOrg }),
+		"short center code":   validWith(valid, func(v *CreateDeviceInput) { v.CenterCode = "3402000" }),
+		"non-digit center":    validWith(valid, func(v *CreateDeviceInput) { v.CenterCode = "3402000a" }),
 		"unknown device type": validWith(valid, func(v *CreateDeviceInput) { v.DeviceType = "999" }),
-		"empty name":         validWith(valid, func(v *CreateDeviceInput) { v.DeviceName = "" }),
-		"empty manufacturer": validWith(valid, func(v *CreateDeviceInput) { v.Manufacturer = "" }),
-		"empty realm":        validWith(valid, func(v *CreateDeviceInput) { v.SIPRealm = "" }),
-		"control in realm":   validWith(valid, func(v *CreateDeviceInput) { v.SIPRealm = "realm\x00suffix" }),
-		"empty password":     validWith(valid, func(v *CreateDeviceInput) { v.Password = "" }),
+		"empty name":          validWith(valid, func(v *CreateDeviceInput) { v.DeviceName = "" }),
+		"empty manufacturer":  validWith(valid, func(v *CreateDeviceInput) { v.Manufacturer = "" }),
+		"empty realm":         validWith(valid, func(v *CreateDeviceInput) { v.SIPRealm = "" }),
+		"control in realm":    validWith(valid, func(v *CreateDeviceInput) { v.SIPRealm = "realm\x00suffix" }),
+		"empty password":      validWith(valid, func(v *CreateDeviceInput) { v.Password = "" }),
 	} {
 		if err := input.Validate(); err == nil {
 			t.Errorf("%s accepted invalid input", name)
@@ -92,11 +92,11 @@ func TestDeviceAPIDoesNotLeakCredentials(t *testing.T) {
 	orgID := "00000000-0000-0000-0000-000000000002"
 	stub := &endpointStub{
 		device: Device{
-			ID:           "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-			TenantID:     "00000000-0000-0000-0000-000000000001",
-			OrgUnitID:    &orgID,
+			ID:             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			TenantID:       "00000000-0000-0000-0000-000000000001",
+			OrgUnitID:      &orgID,
 			DeviceAccessID: "34020000001320000001",
-			DeviceName:   "东门摄像机", Manufacturer: "海康威视",
+			DeviceName:     "东门摄像机", Manufacturer: "海康威视",
 			DeviceType: DeviceTypeIPC, SIPUsername: "34020000001320000001",
 			SIPRealm: "3402000000", DigestAlgorithm: "MD5",
 			Enabled: true, ProfileVersion: 1, AccessSyncStatus: "pending",

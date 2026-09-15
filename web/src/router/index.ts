@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import ChannelsView from '@/views/ChannelsView.vue'
 import ConsoleView from '@/views/ConsoleView.vue'
 import DevicesView from '@/views/DevicesView.vue'
 import IdentityView from '@/views/IdentityView.vue'
@@ -12,6 +13,7 @@ export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', component: ConsoleView, meta: { requiresAuth: true } },
+    { path: '/channels', component: ChannelsView, meta: { requiresAuth: true } },
     { path: '/devices', component: DevicesView, meta: { requiresAuth: true } },
     { path: '/users', component: UsersView, meta: { requiresAuth: true } },
     { path: '/identity', component: IdentityView, meta: { requiresAuth: true } },
@@ -26,7 +28,7 @@ router.beforeEach((to) => {
     return { path: '/login', query: to.fullPath !== '/' ? { redirect: to.fullPath } : {} }
   }
   if (to.path === '/login' && isAuthenticated()) {
-    return { path: '/devices' }
+    return { path: '/channels' }
   }
   return true
 })

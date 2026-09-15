@@ -14,6 +14,7 @@ import (
 	"github.com/new-vision-lab/new-vision/internal/authz"
 	"github.com/new-vision-lab/new-vision/internal/identity"
 	"github.com/new-vision-lab/new-vision/internal/nodeapp/access"
+	"github.com/new-vision-lab/new-vision/internal/nodeapp/channel"
 	"github.com/new-vision-lab/new-vision/internal/nodeapp/device"
 	"github.com/new-vision-lab/new-vision/internal/nodeapp/siptest"
 	"github.com/new-vision-lab/new-vision/internal/nodeapp/sync"
@@ -93,6 +94,9 @@ func New(ctx context.Context, cfg Config, version string, logger *slog.Logger) (
 	projection := access.NewRedisProjection(redisClient)
 	accessClient := access.NewAccessClient(cfg.AccessRPCURL, cfg.AccessRPCTimeout)
 	deviceManager := device.NewDeviceManager(devices, projection)
+	channelRepo := channel.NewPostgresChannelRepository(postgres)
+	channelService := channel.NewService(channelRepo, deviceManager, projection, store.OrgUnits)
+	catalogConsumer := channel.NewConsumer(channelRepo, devices)
 	siptestSim := siptest.NewSIPSimulator(cfg.SIPHost, cfg.SIPPort, cfg.AccessRPCTimeout, devices)
 	accessEP := accessEndpoints{
 		snapshot: accessClient.GetRuntimeSnapshot,
@@ -104,7 +108,7 @@ func New(ctx context.Context, cfg Config, version string, logger *slog.Logger) (
 	healthMux := newHandler(postgres.Ping, func(ctx context.Context) error {
 		return redisClient.Ping(ctx).Err()
 	}, cfg.HealthTimeout, metrics)
-	NewRoutes(healthMux, authnHandler, authzMiddleware, identityHandler, deviceManager, accessEP, siptestSim, store.OrgUnits, store.Users, auditWriter)
+	NewRoutes(healthMux, authnHandler, authzMiddleware, identityHandler, deviceManager, channelService, accessEP, siptestSim, store.OrgUnits, store.Users, auditWriter)
 	app := &App{
 		Handler:  healthMux,
 		postgres: postgres,
@@ -119,7 +123,7 @@ func New(ctx context.Context, cfg Config, version string, logger *slog.Logger) (
 		return nil, fmt.Errorf("seed admin: %w", err)
 	}
 
-	go sync.NewSyncRunner(devices, accessClient, projection, cfg.AccessPollInterval).Run(ctx)
+	go sync.NewSyncRunner(devices, accessClient, projection, catalogConsumer, cfg.AccessPollInterval).Run(ctx)
 	return app, nil
 }
 

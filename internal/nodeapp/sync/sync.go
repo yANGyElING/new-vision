@@ -5,6 +5,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -37,14 +38,22 @@ type SyncRunner struct {
 	repository DeviceRepository
 	accessAPI  access.AccessAPI
 	projection AccessRuntimeProjection
+	catalog    CatalogConsumer
 	interval   time.Duration
 }
 
-func NewSyncRunner(repository DeviceRepository, accessAPI access.AccessAPI, projection AccessRuntimeProjection, interval time.Duration) *SyncRunner {
+// CatalogConsumer applies catalog access events (progress / result) to
+// node-app state. Implemented by the channel package consumer.
+type CatalogConsumer interface {
+	ApplyProgress(context.Context, device.Device, access.CatalogProgressPayload) error
+	ApplyResult(context.Context, device.Device, access.CatalogResultPayload) error
+}
+
+func NewSyncRunner(repository DeviceRepository, accessAPI access.AccessAPI, projection AccessRuntimeProjection, catalog CatalogConsumer, interval time.Duration) *SyncRunner {
 	if interval <= 0 {
 		interval = time.Second
 	}
-	return &SyncRunner{repository: repository, accessAPI: accessAPI, projection: projection, interval: interval}
+	return &SyncRunner{repository: repository, accessAPI: accessAPI, projection: projection, catalog: catalog, interval: interval}
 }
 
 func (s *SyncRunner) Run(ctx context.Context) {
@@ -166,7 +175,7 @@ func (s *SyncRunner) poll(ctx context.Context) error {
 	}
 	next := cursor
 	for _, event := range result.Events {
-		if err := validateEvent(event); err != nil {
+		if err := validateEventEnvelope(event); err != nil {
 			return err
 		}
 		if event.Sequence != next+1 {
@@ -177,10 +186,7 @@ func (s *SyncRunner) poll(ctx context.Context) error {
 			next = event.Sequence
 			continue
 		}
-		state := access.RuntimeState{State: event.Payload.State, Reason: event.Payload.Reason,
-			RemoteAddress: event.Payload.RemoteAddress, ExpiresAt: event.Payload.ExpiresAt,
-			LastSeen: event.Payload.LastSeen, SessionEpoch: event.SessionEpoch}
-		if err = s.projection.Apply(ctx, d.ID, state); err != nil {
+		if err := s.applyEvent(ctx, d, event); err != nil {
 			return err
 		}
 		next = event.Sequence
@@ -211,14 +217,63 @@ func safeError(err error) string {
 	return "access synchronization failed"
 }
 
-func validateEvent(event access.AccessEvent) error {
+// applyEvent decodes the event payload by type and applies it to the
+// corresponding projection: registration events refresh the Redis runtime
+// projection; catalog events go to the channel consumer.
+func (s *SyncRunner) applyEvent(ctx context.Context, d device.Device, event access.AccessEvent) error {
+	switch event.Type {
+	case "registration_changed":
+		var payload access.AccessEventPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return fmt.Errorf("decode registration event: %w", err)
+		}
+		if payload.State != "online" && payload.State != "offline" {
+			return fmt.Errorf("unsupported access event")
+		}
+		state := access.RuntimeState{State: payload.State, Reason: payload.Reason,
+			RemoteAddress: payload.RemoteAddress, ExpiresAt: payload.ExpiresAt,
+			LastSeen: payload.LastSeen, SessionEpoch: event.SessionEpoch}
+		return s.projection.Apply(ctx, d.ID, state)
+	case "catalog.progress":
+		var payload access.CatalogProgressPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return fmt.Errorf("decode catalog progress event: %w", err)
+		}
+		if payload.SN <= 0 || payload.Received < 0 || payload.Total < 0 {
+			return fmt.Errorf("invalid catalog progress event")
+		}
+		return s.catalog.ApplyProgress(ctx, d, payload)
+	case "catalog.result":
+		var payload access.CatalogResultPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return fmt.Errorf("decode catalog result event: %w", err)
+		}
+		if !payload.OK && payload.Error == "" {
+			return fmt.Errorf("invalid catalog result event")
+		}
+		for _, ch := range payload.Channels {
+			if ch.Code == "" || len(ch.Code) > 20 {
+				return fmt.Errorf("invalid catalog result channel code")
+			}
+		}
+		return s.catalog.ApplyResult(ctx, d, payload)
+	default:
+		return fmt.Errorf("unsupported access event")
+	}
+}
+
+// validateEventEnvelope checks the envelope fields shared by every access
+// event; payload validation happens per type in applyEvent.
+func validateEventEnvelope(event access.AccessEvent) error {
 	if event.Sequence <= 0 || event.EventID == "" || event.AccessInstanceID == "" || event.SessionEpoch == "" || !isValidAccessID(event.DeviceAccessID) {
 		return fmt.Errorf("invalid access event envelope")
 	}
-	if event.Type != "registration_changed" || (event.Payload.State != "online" && event.Payload.State != "offline") {
+	switch event.Type {
+	case "registration_changed", "catalog.progress", "catalog.result":
+		return nil
+	default:
 		return fmt.Errorf("unsupported access event")
 	}
-	return nil
 }
 
 func isValidAccessID(id string) bool {

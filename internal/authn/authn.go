@@ -13,10 +13,10 @@ import (
 
 // Principal is the authenticated caller attached to the request context.
 type Principal struct {
-	UserID     string
-	TenantID   string
-	Username   string
-	Roles      []string
+	UserID   string
+	TenantID string
+	Username string
+	Roles    []string
 	// DelegatedIdentity is reserved for future Center-granted delegation.
 	// It is never populated by local JWT login in this phase.
 	DelegatedIdentity *DelegatedIdentity

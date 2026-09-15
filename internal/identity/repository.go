@@ -10,10 +10,10 @@ import (
 )
 
 var (
-	ErrNotFound    = errors.New("identity: not found")
-	ErrConflict    = errors.New("identity: already exists")
-	ErrInUse       = errors.New("identity: in use")
-	ErrInvalid     = errors.New("identity: invalid input")
+	ErrNotFound     = errors.New("identity: not found")
+	ErrConflict     = errors.New("identity: already exists")
+	ErrInUse        = errors.New("identity: in use")
+	ErrInvalid      = errors.New("identity: invalid input")
 	ErrNoPermission = errors.New("identity: permission denied")
 )
 

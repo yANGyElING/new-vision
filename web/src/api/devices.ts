@@ -10,6 +10,14 @@ export type RuntimeState = {
   stale?: boolean
 }
 
+export type CatalogState = 'never' | 'in_progress' | 'ok' | 'failed'
+
+export type ChannelSummary = {
+  total: number
+  online: number
+  missing: number
+}
+
 export type Device = {
   id: string
   tenant_id: string
@@ -25,6 +33,14 @@ export type Device = {
   profile_version: number
   access_sync_status: 'pending' | 'synced'
   access_synced_version: number | null
+  catalog_state: CatalogState
+  catalog_last_query_at?: string | null
+  catalog_last_ok_at?: string | null
+  catalog_last_count?: number | null
+  catalog_last_error?: string | null
+  catalog_received?: number | null
+  catalog_total?: number | null
+  catalog_channels?: ChannelSummary | null
   created_at: string
   updated_at: string
   runtime?: RuntimeState | null

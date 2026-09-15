@@ -20,11 +20,11 @@ type Tenant struct {
 // by users. It is the data-scope anchor: users get scopes pointing at org
 // units (subtree expansion), devices optionally point at an org unit.
 type OrgUnit struct {
-	ID        string    `json:"id"`
-	TenantID  string    `json:"tenant_id"`
-	ParentID  *string   `json:"parent_id,omitempty"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string     `json:"id"`
+	TenantID  string     `json:"tenant_id"`
+	ParentID  *string    `json:"parent_id,omitempty"`
+	Name      string     `json:"name"`
+	CreatedAt time.Time  `json:"created_at"`
 	Children  []*OrgUnit `json:"children,omitempty"`
 }
 
@@ -94,10 +94,10 @@ type UpdateUserInput struct {
 }
 
 const (
-	RoleNodeAdmin    = "node_admin"
-	RoleTenantAdmin  = "tenant_admin"
-	RoleOperator     = "operator"
-	RoleViewer       = "viewer"
+	RoleNodeAdmin      = "node_admin"
+	RoleTenantAdmin    = "tenant_admin"
+	RoleOperator       = "operator"
+	RoleViewer         = "viewer"
 	UserStatusActive   = "active"
 	UserStatusDisabled = "disabled"
 )
@@ -153,15 +153,15 @@ type UserRepository interface {
 }
 
 type Store struct {
-	Tenants TenantRepository
+	Tenants  TenantRepository
 	OrgUnits OrgUnitRepository
-	Users   UserRepository
+	Users    UserRepository
 }
 
 func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{
-		Tenants: NewPostgresTenantRepository(pool),
+		Tenants:  NewPostgresTenantRepository(pool),
 		OrgUnits: NewPostgresOrgUnitRepository(pool),
-		Users:   NewPostgresUserRepository(pool),
+		Users:    NewPostgresUserRepository(pool),
 	}
 }

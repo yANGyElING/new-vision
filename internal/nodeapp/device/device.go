@@ -33,36 +33,54 @@ var (
 )
 
 type Device struct {
-	ID                  string        `json:"id"`
-	TenantID            string        `json:"tenant_id"`
-	OrgUnitID           *string       `json:"org_unit_id,omitempty"`
-	DeviceAccessID      string        `json:"device_access_id"`
-	DeviceName          string        `json:"device_name"`
-	Manufacturer        string        `json:"manufacturer"`
-	DeviceType          string        `json:"device_type"`
-	SIPUsername         string        `json:"sip_username"`
-	SIPRealm            string        `json:"sip_realm"`
-	DigestAlgorithm     string        `json:"digest_algorithm"`
-	DigestHA1           string        `json:"-"`
-	Enabled             bool          `json:"enabled"`
-	ProfileVersion      int64         `json:"profile_version"`
-	AccessSyncStatus    string        `json:"access_sync_status"`
-	AccessSyncedVersion *int64        `json:"access_synced_version"`
-	CreatedAt           time.Time     `json:"created_at"`
-	UpdatedAt           time.Time     `json:"updated_at"`
+	ID                  string               `json:"id"`
+	TenantID            string               `json:"tenant_id"`
+	OrgUnitID           *string              `json:"org_unit_id,omitempty"`
+	DeviceAccessID      string               `json:"device_access_id"`
+	DeviceName          string               `json:"device_name"`
+	Manufacturer        string               `json:"manufacturer"`
+	DeviceType          string               `json:"device_type"`
+	SIPUsername         string               `json:"sip_username"`
+	SIPRealm            string               `json:"sip_realm"`
+	DigestAlgorithm     string               `json:"digest_algorithm"`
+	DigestHA1           string               `json:"-"`
+	Enabled             bool                 `json:"enabled"`
+	ProfileVersion      int64                `json:"profile_version"`
+	AccessSyncStatus    string               `json:"access_sync_status"`
+	AccessSyncedVersion *int64               `json:"access_synced_version"`
+	CatalogState        string               `json:"catalog_state"`
+	CatalogLastQueryAt  *time.Time           `json:"catalog_last_query_at,omitempty"`
+	CatalogLastOkAt     *time.Time           `json:"catalog_last_ok_at,omitempty"`
+	CatalogLastCount    *int                 `json:"catalog_last_count,omitempty"`
+	CatalogLastError    *string              `json:"catalog_last_error,omitempty"`
+	CatalogReceived     *int                 `json:"catalog_received,omitempty"`
+	CatalogTotal        *int                 `json:"catalog_total,omitempty"`
+	CreatedAt           time.Time            `json:"created_at"`
+	UpdatedAt           time.Time            `json:"updated_at"`
 	Runtime             *access.RuntimeState `json:"runtime,omitempty"`
+	// CatalogChannels summarizes the channel dot-matrix column on the
+	// management page; nil when the device has never reported a catalog.
+	CatalogChannels *ChannelSummary `json:"catalog_channels,omitempty"`
+}
+
+// ChannelSummary is the per-device channel aggregate rendered next to the
+// catalog sync state (D51: dot matrix + "online/total").
+type ChannelSummary struct {
+	Total   int `json:"total"`
+	Online  int `json:"online"`
+	Missing int `json:"missing"`
 }
 
 type CreateDeviceInput struct {
-	TenantID   string `json:"-"`
-	OrgUnitID  *string `json:"org_unit_id"`
-	CenterCode string `json:"center_code"`
-	DeviceType string `json:"device_type"`
-	DeviceName string `json:"device_name"`
-	Manufacturer string `json:"manufacturer"`
-	SIPRealm   string `json:"sip_realm"`
-	Password   string `json:"password"`
-	Enabled    bool   `json:"enabled"`
+	TenantID     string  `json:"-"`
+	OrgUnitID    *string `json:"org_unit_id"`
+	CenterCode   string  `json:"center_code"`
+	DeviceType   string  `json:"device_type"`
+	DeviceName   string  `json:"device_name"`
+	Manufacturer string  `json:"manufacturer"`
+	SIPRealm     string  `json:"sip_realm"`
+	Password     string  `json:"password"`
+	Enabled      bool    `json:"enabled"`
 }
 
 // GB/T 28181 device type codes (position 11-13 of the 20-digit access id).
@@ -150,6 +168,9 @@ type DeviceRepository interface {
 	MarkSynced(context.Context, string, int64) error
 	MarkReconciled(context.Context, []ReconciledProfile) error
 	MarkFailed(context.Context, string, time.Duration, string) error
+	SetCatalogInProgress(context.Context, string) error
+	SetCatalogOK(context.Context, string, int) error
+	SetCatalogFailed(context.Context, string, int, int, string) error
 	Delete(context.Context, string) error
 }
 
@@ -160,16 +181,42 @@ func NewPostgresDeviceRepository(pool *pgxpool.Pool) *PostgresDeviceRepository {
 }
 
 const deviceColumns = `id, tenant_id, org_unit_id, device_access_id, device_name, manufacturer, device_type, sip_username, sip_realm, digest_algorithm, digest_ha1,
- enabled, profile_version, access_sync_status, access_synced_version, created_at, updated_at`
+ enabled, profile_version, access_sync_status, access_synced_version, catalog_state, catalog_last_query_at, catalog_last_ok_at, catalog_last_count, catalog_last_error, catalog_received, catalog_total, created_at, updated_at`
 
 func scanDevice(row pgx.Row) (Device, error) {
 	var d Device
 	var orgUnitID *string
 	err := row.Scan(&d.ID, &d.TenantID, &orgUnitID, &d.DeviceAccessID, &d.DeviceName, &d.Manufacturer, &d.DeviceType,
 		&d.SIPUsername, &d.SIPRealm, &d.DigestAlgorithm, &d.DigestHA1,
-		&d.Enabled, &d.ProfileVersion, &d.AccessSyncStatus, &d.AccessSyncedVersion, &d.CreatedAt, &d.UpdatedAt)
+		&d.Enabled, &d.ProfileVersion, &d.AccessSyncStatus, &d.AccessSyncedVersion,
+		&d.CatalogState, &d.CatalogLastQueryAt, &d.CatalogLastOkAt, &d.CatalogLastCount, &d.CatalogLastError, &d.CatalogReceived, &d.CatalogTotal,
+		&d.CreatedAt, &d.UpdatedAt)
 	d.OrgUnitID = orgUnitID
 	return d, err
+}
+
+// scanDeviceWithChannels reads deviceColumns plus the channel aggregate
+// columns (total / online / missing) appended by the ListByTenant lateral
+// join. A device cannot be scanned twice from one row, so this duplicates
+// scanDevice's destinations instead of delegating.
+func scanDeviceWithChannels(row pgx.Row) (Device, error) {
+	var d Device
+	var orgUnitID *string
+	var total, online, missing int
+	err := row.Scan(&d.ID, &d.TenantID, &orgUnitID, &d.DeviceAccessID, &d.DeviceName, &d.Manufacturer, &d.DeviceType,
+		&d.SIPUsername, &d.SIPRealm, &d.DigestAlgorithm, &d.DigestHA1,
+		&d.Enabled, &d.ProfileVersion, &d.AccessSyncStatus, &d.AccessSyncedVersion,
+		&d.CatalogState, &d.CatalogLastQueryAt, &d.CatalogLastOkAt, &d.CatalogLastCount, &d.CatalogLastError, &d.CatalogReceived, &d.CatalogTotal,
+		&d.CreatedAt, &d.UpdatedAt,
+		&total, &online, &missing)
+	d.OrgUnitID = orgUnitID
+	if err != nil {
+		return Device{}, err
+	}
+	if total > 0 {
+		d.CatalogChannels = &ChannelSummary{Total: total, Online: online, Missing: missing}
+	}
+	return d, nil
 }
 
 func (r *PostgresDeviceRepository) Create(ctx context.Context, in CreateDeviceInput) (Device, error) {
@@ -355,25 +402,31 @@ func (r *PostgresDeviceRepository) List(ctx context.Context) ([]Device, error) {
 	return devices, rows.Err()
 }
 
-// ListByTenant returns devices belonging to the tenant. Full-visibility
+// ListByTenant returns devices belonging to the tenant, each with a channel
+// aggregate for the management page dot-matrix column. Full-visibility
 // callers (node_admin / all_orgs) pass includeUnassigned=true and see every
 // device in the tenant. Scoped callers pass includeUnassigned=false and see
 // only devices whose org unit is inside the allowed set; an empty allowed
 // set denies everything (default deny).
 func (r *PostgresDeviceRepository) ListByTenant(ctx context.Context, tenantID string, allowedOrgUnitIDs []string, includeUnassigned bool) ([]Device, error) {
+	const summaryJoin = ` LEFT JOIN LATERAL (
+ SELECT count(*) AS total,
+        count(*) FILTER (WHERE reported_status = 'ON' AND NOT missing) AS online,
+        count(*) FILTER (WHERE missing) AS missing
+ FROM channels WHERE channels.device_id = d.id) cs ON true`
 	var rows pgx.Rows
 	var err error
 	if includeUnassigned {
 		// Full tenant visibility: org filter is irrelevant.
-		rows, err = r.pool.Query(ctx, `SELECT `+deviceColumns+` FROM devices
- WHERE tenant_id = $1 ORDER BY device_access_id`, tenantID)
+		rows, err = r.pool.Query(ctx, `SELECT `+deviceColumns+`, cs.total, cs.online, cs.missing FROM devices d`+summaryJoin+`
+ WHERE d.tenant_id = $1 ORDER BY d.device_access_id`, tenantID)
 	} else {
 		if len(allowedOrgUnitIDs) == 0 {
 			return []Device{}, nil
 		}
-		rows, err = r.pool.Query(ctx, `SELECT `+deviceColumns+` FROM devices
- WHERE tenant_id = $1 AND org_unit_id = ANY($2)
- ORDER BY device_access_id`, tenantID, allowedOrgUnitIDs)
+		rows, err = r.pool.Query(ctx, `SELECT `+deviceColumns+`, cs.total, cs.online, cs.missing FROM devices d`+summaryJoin+`
+ WHERE d.tenant_id = $1 AND d.org_unit_id = ANY($2)
+ ORDER BY d.device_access_id`, tenantID, allowedOrgUnitIDs)
 	}
 	if err != nil {
 		return nil, err
@@ -381,7 +434,7 @@ func (r *PostgresDeviceRepository) ListByTenant(ctx context.Context, tenantID st
 	defer rows.Close()
 	devices := make([]Device, 0)
 	for rows.Next() {
-		d, err := scanDevice(rows)
+		d, err := scanDeviceWithChannels(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -459,5 +512,38 @@ func (r *PostgresDeviceRepository) MarkFailed(ctx context.Context, id string, in
      next_attempt_at = now() + LEAST($2::bigint * (1 << LEAST(attempt_count, 15)) * interval '1 microsecond', interval '1 minute'),
      last_error = $3
  WHERE device_id = $1 AND processed_at IS NULL`, id, interval.Microseconds(), message)
+	return err
+}
+
+// SetCatalogInProgress records that a catalog sync started (D50): progress
+// events only refresh the state marker and the query timestamp. A new sync
+// on a previously-ok device flips the state back to in_progress.
+func (r *PostgresDeviceRepository) SetCatalogInProgress(ctx context.Context, id string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE devices
+ SET catalog_state = 'in_progress', catalog_last_query_at = now(), updated_at = now()
+ WHERE id = $1`, id)
+	return err
+}
+
+// SetCatalogOK records a completed catalog sync. The channel rows must be
+// written first (channels table is the authoritative data; the device row is
+// a progress indicator).
+func (r *PostgresDeviceRepository) SetCatalogOK(ctx context.Context, id string, count int) error {
+	_, err := r.pool.Exec(ctx, `UPDATE devices
+ SET catalog_state = 'ok', catalog_last_ok_at = now(), catalog_last_count = $2,
+     catalog_last_error = NULL, catalog_received = $2, catalog_total = $2, updated_at = now()
+ WHERE id = $1`, id, count)
+	return err
+}
+
+// SetCatalogFailed records a failed catalog sync. Old channel data is kept
+// (D45/D46: a failed sync never touches channels).
+func (r *PostgresDeviceRepository) SetCatalogFailed(ctx context.Context, id string, received, total int, message string) error {
+	if len(message) > 1000 {
+		message = message[:1000]
+	}
+	_, err := r.pool.Exec(ctx, `UPDATE devices
+ SET catalog_state = 'failed', catalog_last_error = $2, catalog_received = $3, catalog_total = $4, updated_at = now()
+ WHERE id = $1`, id, message, received, total)
 	return err
 }

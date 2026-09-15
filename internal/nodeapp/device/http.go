@@ -217,14 +217,14 @@ func decodeCreateDeviceBody(w http.ResponseWriter, r *http.Request) (CreateDevic
 		orgUnitID = &request.OrgUnitID
 	}
 	return CreateDeviceInput{
-		OrgUnitID:  orgUnitID,
-		CenterCode: request.CenterCode,
-		DeviceType: request.DeviceType,
-		DeviceName: request.DeviceName,
+		OrgUnitID:    orgUnitID,
+		CenterCode:   request.CenterCode,
+		DeviceType:   request.DeviceType,
+		DeviceName:   request.DeviceName,
 		Manufacturer: request.Manufacturer,
-		SIPRealm:   request.SIPRealm,
-		Password:   request.Password,
-		Enabled:    *request.Enabled,
+		SIPRealm:     request.SIPRealm,
+		Password:     request.Password,
+		Enabled:      *request.Enabled,
 	}, true
 }
 
@@ -288,6 +288,30 @@ func WithScope(ctx context.Context, tenantID string, orgUnitIDs []string, includ
 	ctx = context.WithValue(ctx, orgKey{}, orgUnitIDs)
 	ctx = context.WithValue(ctx, includeUnassignedKey{}, includeUnassigned)
 	return ctx
+}
+
+// TenantIDFrom / OrgUnitIDsFrom / IncludeUnassignedFrom expose the scope
+// values to sibling packages (channel routes) that run inside the same
+// scope wrapper.
+func TenantIDFrom(ctx context.Context) string {
+	if v, ok := ctx.Value(tenantKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+func OrgUnitIDsFrom(ctx context.Context) []string {
+	if v, ok := ctx.Value(orgKey{}).([]string); ok {
+		return v
+	}
+	return nil
+}
+
+func IncludeUnassignedFrom(ctx context.Context) bool {
+	if v, ok := ctx.Value(includeUnassignedKey{}).(bool); ok {
+		return v
+	}
+	return false
 }
 
 type tenantKey struct{}

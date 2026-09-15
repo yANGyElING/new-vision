@@ -14,6 +14,7 @@ import (
 	"github.com/new-vision-lab/new-vision/internal/authz"
 	"github.com/new-vision-lab/new-vision/internal/identity"
 	"github.com/new-vision-lab/new-vision/internal/nodeapp/access"
+	"github.com/new-vision-lab/new-vision/internal/nodeapp/channel"
 	"github.com/new-vision-lab/new-vision/internal/nodeapp/device"
 	"github.com/new-vision-lab/new-vision/internal/nodeapp/siptest"
 )
@@ -40,6 +41,7 @@ func NewRoutes(
 	authzMiddleware *authz.Middleware,
 	identityHandler *identity.Handler,
 	devices device.DeviceEndpoints,
+	channels *channel.Service,
 	accessEP accessEndpoints,
 	sip *siptest.SIPSimulator,
 	orgUnits identity.OrgUnitRepository,
@@ -96,6 +98,13 @@ func NewRoutes(
 		recordAudit(ctx, auditWriter, action, "device", resourceID, detail)
 	}
 	device.RegisterRoutes(mux, devices, deviceGuard, deviceAudit)
+
+	// Channel read surface (channel:view). The org_unit_id filter resolves to
+	// a subtree inside the channel service via the identity org repository.
+	channelGuard := func(obj, act string, h http.HandlerFunc) http.HandlerFunc {
+		return authzMiddleware.With(obj, act, scope(h))
+	}
+	channel.RegisterRoutes(mux, channels, channelGuard)
 
 	// Access console (read-only runtime inspection).
 	accessGuard := func(obj, act string, h http.HandlerFunc) http.HandlerFunc {

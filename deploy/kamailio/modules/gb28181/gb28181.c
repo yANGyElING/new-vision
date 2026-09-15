@@ -48,6 +48,11 @@ MODULE_VERSION
 #define KEY_EVENT_SEQUENCE KEY_PREFIX "event-sequence"
 #define KEY_EVENTS KEY_PREFIX "events"
 #define KEY_ACKED KEY_PREFIX "acked:node-app"
+#define KEY_CATALOG_PREFIX KEY_PREFIX "catalog:"
+
+#define CATALOG_TTL_SECONDS 60
+#define CATALOG_MAX_CHANNELS 1024
+#define MANSCDP_BODY_MAX 65536
 
 #define DATA_INVALID_PROFILE "INVALID_PROFILE"
 #define DATA_PROFILE_CONFLICT "PROFILE_VERSION_CONFLICT"
@@ -69,7 +74,7 @@ static int w_ready(struct sip_msg *msg, char *p1, char *p2);
 static int w_rpc_dispatch(struct sip_msg *msg, char *p1, char *p2);
 static int w_authorize_register(struct sip_msg *msg, char *p1, char *p2);
 static int w_record_registration(struct sip_msg *msg, char *p1, char *p2);
-static int w_handle_keepalive(struct sip_msg *msg, char *p1, char *p2);
+static int w_handle_message(struct sip_msg *msg, char *p1, char *p2);
 static int load_request_profile(struct sip_msg *msg, char device_id[21],
         access_profile_t *profile);
 static int parse_register_expires(struct sip_msg *msg, unsigned int *expires);
@@ -77,7 +82,12 @@ static int runtime_register(struct sip_msg *msg, const char *device_id,
         unsigned int expires);
 static int runtime_unregister(struct sip_msg *msg, const char *device_id,
         const char *reason);
-static int parse_keepalive_body(struct sip_msg *msg, const char *device_id);
+static int parse_manscdp_doc(struct sip_msg *msg, xmlDocPtr *doc_out,
+        xmlNodePtr *root_out);
+static int keepalive_from_doc(struct sip_msg *msg, const char *device_id,
+        xmlDocPtr doc, xmlNodePtr root);
+static int catalog_from_doc(const char *device_id, xmlDocPtr doc,
+        xmlNodePtr root);
 static long long unix_now(void);
 static int keepalive_timeout(void);
 static void access_timer(unsigned int ticks, void *param);
@@ -91,6 +101,13 @@ struct access_profile {
     int enabled;
     int tombstone;
     int exists;
+};
+
+/* One channel reported in a Catalog DeviceList item. */
+struct catalog_item {
+    char code[21];
+    char name[256];
+    char status[8];
 };
 
 static int valid_instance_id(const char *value)
@@ -1408,51 +1425,43 @@ static int w_record_registration(struct sip_msg *msg, char *p1, char *p2)
     return runtime_register(msg, device_id, expires) > 0 ? 1 : -2;
 }
 
-static int w_handle_keepalive(struct sip_msg *msg, char *p1, char *p2)
+static int w_handle_message(struct sip_msg *msg, char *p1, char *p2)
 {
-    char device_id[21], key[72], last_seen[32];
+    char device_id[21];
     access_profile_t profile;
-    redisReply *reply;
-    int result;
-    long long deadline;
+    xmlDocPtr doc = NULL;
+    xmlNodePtr root = NULL;
+    xmlChar *cmd = NULL;
+    xmlNodePtr child;
+    int result, rc;
 
     (void)p1;
     (void)p2;
     result = load_request_profile(msg, device_id, &profile);
     if(result != 1)
         return result == -2 ? -3 : -1;
-    if(parse_keepalive_body(msg, device_id) < 0)
+    if(parse_manscdp_doc(msg, &doc, &root) < 0)
         return -2;
-    registration_key(device_id, key);
-    reply = redisCommand(redis_ctx, "HGET %s session_epoch", key);
-    if(!reply)
-        return -3;
-    if(reply->type != REDIS_REPLY_STRING || !reply->str
-            || strcmp(reply->str, session_epoch) != 0) {
-        freeReplyObject(reply);
-        return -1;
+    rc = -2;
+    for(child = root->children; child; child = child->next) {
+        if(child->type != XML_ELEMENT_NODE)
+            continue;
+        if(xmlStrcasecmp(child->name, (const xmlChar *)"CmdType") == 0) {
+            cmd = xmlNodeGetContent(child);
+            break;
+        }
     }
-    freeReplyObject(reply);
-    reply = redisCommand(redis_ctx, "HGET %s state", key);
-    if(!reply)
-        return -3;
-    if(reply->type != REDIS_REPLY_STRING || !reply->str
-            || strcmp(reply->str, "online") != 0) {
-        freeReplyObject(reply);
-        return -1;
-    }
-    freeReplyObject(reply);
-    utc_now(last_seen);
-    deadline = unix_now() + keepalive_timeout();
-    reply = redisCommand(redis_ctx,
-            "HSET %s last_seen %s keepalive_deadline %lld", key, last_seen,
-            deadline);
-    if(!reply_status_ok(reply)) {
-        if(reply) freeReplyObject(reply);
-        return -3;
-    }
-    freeReplyObject(reply);
-    return 1;
+    if(!cmd)
+        goto done;
+    if(xmlStrcasecmp(cmd, (const xmlChar *)"Keepalive") == 0)
+        rc = keepalive_from_doc(msg, device_id, doc, root);
+    else if(xmlStrcasecmp(cmd, (const xmlChar *)"Catalog") == 0)
+        rc = catalog_from_doc(device_id, doc, root);
+done:
+    if(cmd)
+        xmlFree(cmd);
+    xmlFreeDoc(doc);
+    return rc;
 }
 
 static int w_ready(struct sip_msg *msg, char *p1, char *p2)
@@ -1538,29 +1547,22 @@ static long long unix_now(void)
     return (long long)time(NULL);
 }
 
-static int emit_registration_event(const char *device_id, const char *state,
-        const char *reason, const char *remote_address, const char *expires_at,
-        const char *last_seen)
+/* Emit one event into the Access event stream. The payload reference is
+ * stolen (ownership moves into the event envelope). Uses the same
+ * WATCH/MULTI/EXEC sequence allocation as registration events, so sequence
+ * numbers are gapless across event types. */
+static int emit_access_event(const char *type, const char *device_id,
+        const char *occurred_at, json_t *payload)
 {
-    json_t *payload, *event;
     char *encoded = NULL;
     char event_id[128];
     redisReply *reply;
     long long current, next;
     int attempt, committed;
 
+    if(!payload)
+        return -1;
     for(attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
-        payload = json_pack("{s:s,s:s,s:s}", "state", state, "reason", reason,
-                "remote_address", remote_address ? remote_address : "");
-        if(!payload
-                || (expires_at && *expires_at
-                    && json_object_set_new(payload, "expires_at",
-                        json_string(expires_at)) < 0)
-                || json_object_set_new(payload, "last_seen", json_string(last_seen)) < 0) {
-            if(payload)
-                json_decref(payload);
-            return -1;
-        }
         reply = redisCommand(redis_ctx, "WATCH %s", KEY_EVENT_SEQUENCE);
         if(!reply_status_ok(reply)) {
             if(reply)
@@ -1577,26 +1579,22 @@ static int emit_registration_event(const char *device_id, const char *state,
         }
         next = current + 1;
         snprintf(event_id, sizeof(event_id), "%s:%lld", access_instance_id, next);
-        event = json_pack("{s:s,s:I,s:s,s:s,s:s,s:s,s:s}", "event_id",
-                event_id, "sequence", (json_int_t)next,
+        json_t *event = json_pack("{s:s,s:I,s:s,s:s,s:s,s:s,s:s}",
+                "event_id", event_id,
+                "sequence", (json_int_t)next,
                 "access_instance_id", access_instance_id,
                 "session_epoch", session_epoch,
-                "type", "registration_changed", "occurred_at", last_seen,
+                "type", type,
+                "occurred_at", occurred_at,
                 "device_access_id", device_id);
-        if(!event) {
+        if(!event || json_object_set_new(event, "payload", payload) < 0) {
+            if(event)
+                json_decref(event);
             unwatch();
             json_decref(payload);
             return -1;
         }
-        /* json_object_set_new steals the payload reference: afterwards the
-         * event owns payload and the local pointer must not be decref'd
-         * again (treat as NULL). */
-        if(json_object_set_new(event, "payload", payload) < 0) {
-            unwatch();
-            json_decref(event);
-            json_decref(payload);
-            return -1;
-        }
+        /* Ownership moved into the event; only the event is freed below. */
         payload = NULL;
         encoded = json_dumps(event, JSON_COMPACT);
         json_decref(event);
@@ -1620,23 +1618,43 @@ static int emit_registration_event(const char *device_id, const char *state,
         free(encoded);
         encoded = NULL;
         committed = exec_transaction();
-        if(committed < 0) {
-            json_decref(payload);
+        if(committed < 0)
             return -1;
-        }
         if(committed == 0)
             continue;
-        json_decref(payload);
         return 0;
 
 event_error:
         discard_transaction();
         free(encoded);
-        json_decref(payload);
         return -1;
     }
     json_decref(payload);
     return -1;
+}
+
+static int emit_registration_event(const char *device_id, const char *state,
+        const char *reason, const char *remote_address, const char *expires_at,
+        const char *last_seen)
+{
+    json_t *payload;
+
+    payload = json_pack("{s:s,s:s,s:s}", "state", state, "reason", reason,
+            "remote_address", remote_address ? remote_address : "");
+    if(!payload)
+        return -1;
+    if(expires_at && *expires_at
+            && json_object_set_new(payload, "expires_at",
+                json_string(expires_at)) < 0) {
+        json_decref(payload);
+        return -1;
+    }
+    if(json_object_set_new(payload, "last_seen", json_string(last_seen)) < 0) {
+        json_decref(payload);
+        return -1;
+    }
+    return emit_access_event("registration_changed", device_id, last_seen,
+            payload);
 }
 
 static int runtime_register(struct sip_msg *msg, const char *device_id,
@@ -1759,15 +1777,18 @@ static int xml_contains_doctype(const char *body, size_t length)
     return 0;
 }
 
-static int parse_keepalive_body(struct sip_msg *msg, const char *device_id)
+/* Parse the shared MANSCDP+xml envelope of a SIP MESSAGE body: content
+ * type, bounded length, doctype rejection, and XML well-formedness. The
+ * caller owns the returned document. Returns 0 on success, -2 on a bad
+ * body. */
+static int parse_manscdp_doc(struct sip_msg *msg, xmlDocPtr *doc_out,
+        xmlNodePtr *root_out)
 {
     char *body;
     long content_length;
-    xmlDocPtr doc = NULL;
-    xmlNodePtr root, child;
-    xmlChar *cmd = NULL, *reported_id = NULL;
-    int valid = 0;
 
+    *doc_out = NULL;
+    *root_out = NULL;
     if(parse_headers(msg, HDR_CONTENTLENGTH_F | HDR_CONTENTTYPE_F, 0) < 0
             || !msg->content_length || !msg->content_type)
         return -2;
@@ -1780,33 +1801,443 @@ static int parse_keepalive_body(struct sip_msg *msg, const char *device_id)
         return -2;
     content_length = get_content_length(msg);
     body = get_body(msg);
-    if(!body || content_length <= 0 || content_length > 65536
+    if(!body || content_length <= 0 || content_length > MANSCDP_BODY_MAX
             || body < msg->buf || body + content_length > msg->buf + msg->len
             || xml_contains_doctype(body, (size_t)content_length))
         return -2;
-    doc = xmlReadMemory(body, (int)content_length, "keepalive.xml", NULL,
+    *doc_out = xmlReadMemory(body, (int)content_length, "manscdp.xml", NULL,
             XML_PARSE_NONET | XML_PARSE_NOERROR | XML_PARSE_NOWARNING);
-    if(!doc)
+    if(!*doc_out)
         return -2;
-    root = xmlDocGetRootElement(doc);
-    if(!root || xmlStrcasecmp(root->name, (const xmlChar *)"Notify") != 0)
-        goto done;
+    *root_out = xmlDocGetRootElement(*doc_out);
+    if(!*root_out) {
+        xmlFreeDoc(*doc_out);
+        *doc_out = NULL;
+        return -2;
+    }
+    return 0;
+}
+
+/* Keepalive MESSAGE: Notify root, DeviceID must match the authenticated
+ * From user. Then refresh the runtime registration projection. */
+static int keepalive_from_doc(struct sip_msg *msg, const char *device_id,
+        xmlDocPtr doc, xmlNodePtr root)
+{
+    char key[72], last_seen[32];
+    xmlNodePtr child;
+    xmlChar *reported_id = NULL;
+    redisReply *reply;
+    long long deadline;
+    int valid = 0;
+
+    (void)doc;
+    if(xmlStrcasecmp(root->name, (const xmlChar *)"Notify") != 0)
+        return -2;
     for(child = root->children; child; child = child->next) {
         if(child->type != XML_ELEMENT_NODE)
             continue;
-        if(xmlStrcasecmp(child->name, (const xmlChar *)"CmdType") == 0)
-            cmd = xmlNodeGetContent(child);
-        else if(xmlStrcasecmp(child->name, (const xmlChar *)"DeviceID") == 0)
+        if(xmlStrcasecmp(child->name, (const xmlChar *)"DeviceID") == 0) {
             reported_id = xmlNodeGetContent(child);
+            break;
+        }
     }
-    valid = cmd && reported_id && xmlStrcasecmp(cmd,
-            (const xmlChar *)"Keepalive") == 0
-            && strcmp((const char *)reported_id, device_id) == 0;
+    valid = reported_id && strcmp((const char *)reported_id, device_id) == 0;
+    if(reported_id)
+        xmlFree(reported_id);
+    if(!valid)
+        return -2;
+    registration_key(device_id, key);
+    reply = redisCommand(redis_ctx, "HGET %s session_epoch", key);
+    if(!reply)
+        return -3;
+    if(reply->type != REDIS_REPLY_STRING || !reply->str
+            || strcmp(reply->str, session_epoch) != 0) {
+        freeReplyObject(reply);
+        return -1;
+    }
+    freeReplyObject(reply);
+    reply = redisCommand(redis_ctx, "HGET %s state", key);
+    if(!reply)
+        return -3;
+    if(reply->type != REDIS_REPLY_STRING || !reply->str
+            || strcmp(reply->str, "online") != 0) {
+        freeReplyObject(reply);
+        return -1;
+    }
+    freeReplyObject(reply);
+    utc_now(last_seen);
+    deadline = unix_now() + keepalive_timeout();
+    reply = redisCommand(redis_ctx,
+            "HSET %s last_seen %s keepalive_deadline %lld", key, last_seen,
+            deadline);
+    if(!reply_status_ok(reply)) {
+        if(reply) freeReplyObject(reply);
+        return -3;
+    }
+    freeReplyObject(reply);
+    return 1;
+}
+
+/* Find the first direct child element with the given name and return its
+ * text content (caller frees). */
+static xmlChar *child_content(xmlNodePtr node, const char *name)
+{
+    xmlNodePtr child;
+
+    for(child = node->children; child; child = child->next) {
+        if(child->type == XML_ELEMENT_NODE
+                && xmlStrcasecmp(child->name, (const xmlChar *)name) == 0)
+            return xmlNodeGetContent(child);
+    }
+    return NULL;
+}
+
+/* Parse one Catalog DeviceList Item: channel code (required), Name and
+ * Status (optional). Returns 0 on success. */
+static int parse_catalog_item(xmlNodePtr item, struct catalog_item *out)
+{
+    xmlChar *code = NULL, *name = NULL, *status = NULL;
+    size_t n;
+    int rc = -1;
+
+    memset(out, 0, sizeof(*out));
+    code = child_content(item, "DeviceID");
+    if(!code)
+        goto done;
+    n = strlen((const char *)code);
+    if(n == 0 || n > 20)
+        goto done;
+    memcpy(out->code, code, n);
+    name = child_content(item, "Name");
+    if(name) {
+        n = strlen((const char *)name);
+        if(n > sizeof(out->name) - 1)
+            n = sizeof(out->name) - 1;
+        memcpy(out->name, name, n);
+    }
+    status = child_content(item, "Status");
+    if(status) {
+        n = strlen((const char *)status);
+        if(n > sizeof(out->status) - 1)
+            n = sizeof(out->status) - 1;
+        memcpy(out->status, status, n);
+    }
+    rc = 0;
 done:
-    if(cmd) xmlFree(cmd);
-    if(reported_id) xmlFree(reported_id);
-    xmlFreeDoc(doc);
-    return valid ? 0 : -2;
+    if(code)
+        xmlFree(code);
+    if(name)
+        xmlFree(name);
+    if(status)
+        xmlFree(status);
+    return rc;
+}
+
+/* Compact per-channel value stored in the aggregation hash: the fields are
+ * kept positional (name, status) so the hash stays small; empty strings mean
+ * "not reported this time" and are skipped by node-app (D43 keep-old). */
+static json_t *catalog_item_json(const struct catalog_item *item)
+{
+    return json_pack("{s:s,s:s}", "name", item->name, "status", item->status);
+}
+
+/* Aggregate one Catalog response frame into the per-(device, SN) Redis
+ * hash, then emit catalog.progress (every frame) and, once the batch is
+ * complete (received >= latest SumNum), a single catalog.result. Channels
+ * are deduplicated by code, so retransmitted frames never double-count.
+ *
+ * Hash fields: total, completed, ch:<code> = {name,status}.
+ * Return codes match w_handle_message: 1 ok, -2 bad request, -3 redis. */
+static int catalog_from_doc(const char *device_id, xmlDocPtr doc,
+        xmlNodePtr root)
+{
+    static const char ch_prefix[] = "ch:";
+    struct catalog_item *items = NULL;
+    char key[128], occurred_at[32];
+    xmlChar *sn_text = NULL, *sum_text = NULL, *device_text = NULL;
+    xmlNodePtr node, list_node = NULL, child;
+    redisReply *reply, *hash = NULL;
+    long long sn, total, item_count = 0;
+    char *end;
+    size_t i, j, count = 0, merged = 0;
+    int attempt, committed, rc = -3;
+    json_t *payload, *channels = NULL, *value;
+
+    (void)doc;
+    if(xmlStrcasecmp(root->name, (const xmlChar *)"Response") != 0
+            && xmlStrcasecmp(root->name, (const xmlChar *)"Notify") != 0)
+        return -2;
+    sn_text = child_content(root, "SN");
+    sum_text = child_content(root, "SumNum");
+    device_text = child_content(root, "DeviceID");
+    if(!sn_text || !sum_text || !device_text
+            || strcmp((const char *)device_text, device_id) != 0) {
+        rc = -2;
+        goto done;
+    }
+    errno = 0;
+    sn = strtoll((const char *)sn_text, &end, 10);
+    if(errno || *end != '\0' || end == (char *)sn_text || sn <= 0
+            || sn == LLONG_MAX) {
+        rc = -2;
+        goto done;
+    }
+    errno = 0;
+    total = strtoll((const char *)sum_text, &end, 10);
+    if(errno || *end != '\0' || end == (char *)sum_text || total < 0
+            || total > CATALOG_MAX_CHANNELS) {
+        rc = -2;
+        goto done;
+    }
+    for(node = root->children; node; node = node->next) {
+        if(node->type == XML_ELEMENT_NODE
+                && xmlStrcasecmp(node->name, (const xmlChar *)"DeviceList") == 0) {
+            list_node = node;
+            break;
+        }
+    }
+    if(list_node) {
+        for(node = list_node->children; node; node = node->next) {
+            if(node->type == XML_ELEMENT_NODE
+                    && xmlStrcasecmp(node->name, (const xmlChar *)"Item") == 0)
+                item_count++;
+        }
+        if(item_count > CATALOG_MAX_CHANNELS) {
+            rc = -2;
+            goto done;
+        }
+        if(item_count > 0) {
+            items = calloc((size_t)item_count, sizeof(*items));
+            if(!items) {
+                rc = -3;
+                goto done;
+            }
+            for(node = list_node->children; node; node = node->next) {
+                struct catalog_item parsed;
+                if(node->type != XML_ELEMENT_NODE
+                        || xmlStrcasecmp(node->name, (const xmlChar *)"Item") != 0)
+                    continue;
+                if(parse_catalog_item(node, &parsed) < 0) {
+                    rc = -2;
+                    goto done;
+                }
+                /* Deduplicate inside one frame by code. */
+                for(j = 0; j < count; j++) {
+                    if(strcmp(items[j].code, parsed.code) == 0)
+                        break;
+                }
+                if(j == count)
+                    items[count++] = parsed;
+            }
+        }
+    }
+    snprintf(key, sizeof(key), KEY_CATALOG_PREFIX "%s:%lld", device_id, sn);
+
+    for(attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
+        reply = redisCommand(redis_ctx, "WATCH %s", key);
+        if(!reply_status_ok(reply)) {
+            if(reply)
+                freeReplyObject(reply);
+            rc = -3;
+            goto done;
+        }
+        freeReplyObject(reply);
+        hash = redisCommand(redis_ctx, "HGETALL %s", key);
+        if(!hash || hash->type != REDIS_REPLY_ARRAY
+                || hash->elements % 2 != 0) {
+            if(hash)
+                freeReplyObject(hash);
+            unwatch();
+            rc = -3;
+            goto done;
+        }
+        /* A completed flag means this batch already produced its result;
+         * late retransmitted frames are dropped silently. */
+        for(i = 0; i < hash->elements; i += 2) {
+            const char *field = hash->element[i]->str;
+            const char *value = hash->element[i + 1]->str;
+            if(field && value && strcmp(field, "completed") == 0) {
+                freeReplyObject(hash);
+                unwatch();
+                rc = 1;
+                goto done;
+            }
+        }
+        merged = 0;
+        for(i = 0; i < hash->elements; i += 2) {
+            if(hash->element[i]->str
+                    && strncmp(hash->element[i]->str, ch_prefix,
+                            sizeof(ch_prefix) - 1) == 0)
+                merged++;
+        }
+        for(i = 0; i < count; i++) {
+            int seen = 0;
+            for(j = 0; j < hash->elements; j += 2) {
+                const char *field = hash->element[j]->str;
+                if(!field)
+                    continue;
+                if(strlen(field) > sizeof(ch_prefix) - 1
+                        && strcmp(field + sizeof(ch_prefix) - 1,
+                                items[i].code) == 0) {
+                    seen = 1;
+                    break;
+                }
+            }
+            if(!seen)
+                merged++;
+        }
+        if(merged > CATALOG_MAX_CHANNELS) {
+            freeReplyObject(hash);
+            unwatch();
+            rc = -2;
+            goto done;
+        }
+        int complete = (merged >= (size_t)total);
+        if(redis_simple("MULTI") < 0) {
+            freeReplyObject(hash);
+            unwatch();
+            rc = -3;
+            goto done;
+        }
+        reply = redisCommand(redis_ctx, "HSET %s total %lld", key, total);
+        if(queue_ok(reply) < 0)
+            goto queue_error;
+        for(i = 0; i < count; i++) {
+            char field[32];
+            json_t *encoded = catalog_item_json(&items[i]);
+            char *text;
+            if(!encoded)
+                goto queue_error;
+            text = json_dumps(encoded, JSON_COMPACT);
+            json_decref(encoded);
+            if(!text)
+                goto queue_error;
+            snprintf(field, sizeof(field), "%s%s", ch_prefix, items[i].code);
+            reply = redisCommand(redis_ctx, "HSET %s %s %b", key, field,
+                    text, strlen(text));
+            free(text);
+            if(queue_ok(reply) < 0)
+                goto queue_error;
+        }
+        if(complete) {
+            reply = redisCommand(redis_ctx, "HSET %s completed 1", key);
+            if(queue_ok(reply) < 0)
+                goto queue_error;
+        }
+        reply = redisCommand(redis_ctx, "EXPIRE %s %d", key,
+                CATALOG_TTL_SECONDS);
+        if(queue_ok(reply) < 0)
+            goto queue_error;
+        freeReplyObject(hash);
+        hash = NULL;
+        committed = exec_transaction();
+        if(committed < 0) {
+            rc = -3;
+            goto done;
+        }
+        if(committed == 0)
+            continue;
+
+        /* Transaction committed: emit progress (every frame), then the
+         * result once when this frame completed the batch. */
+        utc_now(occurred_at);
+        payload = json_pack("{s:I,s:I,s:I}", "sn", (json_int_t)sn,
+                "received", (json_int_t)merged, "total", (json_int_t)total);
+        if(!payload || emit_access_event("catalog.progress", device_id,
+                    occurred_at, payload) < 0) {
+            rc = -3;
+            goto done;
+        }
+        if(!complete) {
+            rc = 1;
+            goto done;
+        }
+        channels = json_array();
+        if(!channels) {
+            rc = -3;
+            goto done;
+        }
+        /* The completed flag was set by this commit: rebuild the full
+         * channel list from a fresh read of the hash. */
+        hash = redisCommand(redis_ctx, "HGETALL %s", key);
+        if(!hash || hash->type != REDIS_REPLY_ARRAY
+                || hash->elements % 2 != 0) {
+            if(hash)
+                freeReplyObject(hash);
+            json_decref(channels);
+            channels = NULL;
+            rc = -3;
+            goto done;
+        }
+        for(i = 0; i < hash->elements; i += 2) {
+            const char *field = hash->element[i]->str;
+            const char *text = hash->element[i + 1]->str;
+            json_error_t error;
+            if(!field || !text
+                    || strncmp(field, ch_prefix, sizeof(ch_prefix) - 1) != 0)
+                continue;
+            value = json_loads(text, JSON_REJECT_DUPLICATES, &error);
+            if(!value
+                    || json_array_append_new(channels, json_pack(
+                            "{s:s,s:o,s:o}",
+                            "code", field + sizeof(ch_prefix) - 1,
+                            "name", json_object_get(value, "name")
+                                ? json_incref(json_object_get(value, "name"))
+                                : json_string(""),
+                            "status", json_object_get(value, "status")
+                                ? json_incref(json_object_get(value, "status"))
+                                : json_string(""))) < 0) {
+                if(value)
+                    json_decref(value);
+                json_decref(channels);
+                channels = NULL;
+                freeReplyObject(hash);
+                rc = -3;
+                goto done;
+            }
+            if(value)
+                json_decref(value);
+        }
+        freeReplyObject(hash);
+        hash = NULL;
+        payload = json_pack("{s:b,s:o}", "ok", 1, "channels", channels);
+        if(!payload) {
+            json_decref(channels);
+            rc = -3;
+            goto done;
+        }
+        /* Ownership of channels moved into payload. */
+        channels = NULL;
+        if(emit_access_event("catalog.result", device_id, occurred_at,
+                    payload) < 0) {
+            rc = -3;
+            goto done;
+        }
+        rc = 1;
+        goto done;
+
+ queue_error:
+        freeReplyObject(hash);
+        hash = NULL;
+        discard_transaction();
+        rc = -3;
+        goto done;
+    }
+    rc = -3;
+
+done:
+    if(sn_text)
+        xmlFree(sn_text);
+    if(sum_text)
+        xmlFree(sum_text);
+    if(device_text)
+        xmlFree(device_text);
+    if(hash)
+        freeReplyObject(hash);
+    if(channels)
+        json_decref(channels);
+    free(items);
+    return rc;
 }
 
 static int keepalive_timeout(void)
@@ -1928,7 +2359,7 @@ static cmd_export_t cmds[] = {
     {"gb28181_rpc_dispatch", (cmd_function)w_rpc_dispatch, 0, 0, 0, ANY_ROUTE},
     {"gb28181_authorize_register", (cmd_function)w_authorize_register, 0, 0, 0, REQUEST_ROUTE},
     {"gb28181_record_registration", (cmd_function)w_record_registration, 0, 0, 0, REQUEST_ROUTE},
-    {"gb28181_handle_keepalive", (cmd_function)w_handle_keepalive, 0, 0, 0, REQUEST_ROUTE},
+    {"gb28181_handle_message", (cmd_function)w_handle_message, 0, 0, 0, REQUEST_ROUTE},
     {0, 0, 0, 0, 0, 0}
 };
 

@@ -7,13 +7,15 @@ import {
 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import { useDevice } from '@/composables/useDevice'
+import ProgressRing from '@/components/ProgressRing.vue'
+import OrgTreeNode from '@/components/OrgTreeNode.vue'
 import { fetchHealth, type HealthState } from '@/api/health'
 import { me } from '@/api/auth'
 import {
   listDevices, createDevice, setDeviceEnabled, updateDeviceMeta, updateDeviceOrg, deleteDevice,
-  previewAccessID, deviceTypeLabel, DEVICE_TYPES, type Device,
+  previewAccessID, deviceTypeLabel, DEVICE_TYPES, type Device, type ChannelSummary,
 } from '@/api/devices'
-import { listOrgUnits, type OrgUnit } from '@/api/identity'
+import { listOrgUnits, listTenants, type OrgUnit, type Tenant } from '@/api/identity'
 
 // ---------- health band ----------
 const health = ref<HealthState>({ kind: 'loading' })
@@ -111,6 +113,16 @@ const flatOrgTree = computed<FlatOrg[]>(() => {
   walk(orgFilterTree.value, 0, '')
   return out
 })
+
+// 树节点折叠（D51：父节点 ▸ 可收起；叶子小圆点）——由 OrgTreeNode 递归渲染，
+// 这里只持有折叠集合。
+const collapsedOrgs = ref<Set<string>>(new Set())
+function toggleOrgCollapse(id: string) {
+  const next = new Set(collapsedOrgs.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  collapsedOrgs.value = next
+}
 
 // ids in the selected org subtree
 function subtreeIDs(rootID: string): Set<string> {
@@ -356,11 +368,93 @@ function typeIcon(code: string) {
   }
 }
 
+// ---------- catalog sync (D50/D51) ----------
+// 四态：✓ 时间·路数 / 圆环+百分比·实收/预计 / ✗ 红环停位 / —
+function catalogState(d: Device): 'never' | 'ok' | 'in_progress' | 'failed' {
+  return d.catalog_state ?? 'never'
+}
+function catalogPct(d: Device): number {
+  if (d.catalog_received == null || d.catalog_total == null || d.catalog_total <= 0) return -1
+  return d.catalog_received / d.catalog_total
+}
+function catalogOkTime(d: Device): string {
+  if (!d.catalog_last_ok_at) return ''
+  const date = new Date(d.catalog_last_ok_at)
+  const hh = String(date.getHours()).padStart(2, '0')
+  const mm = String(date.getMinutes()).padStart(2, '0')
+  return `${hh}:${mm}`
+}
+function catalogFailText(d: Device): string {
+  if (!d.catalog_last_error) return '同步失败'
+  const time = d.catalog_last_query_at ? new Date(d.catalog_last_query_at) : null
+  const hhmm = time ? `${String(time.getHours()).padStart(2, '0')}:${String(time.getMinutes()).padStart(2, '0')}` : ''
+  const counts =
+    d.catalog_received != null && d.catalog_total != null && d.catalog_total > 0
+      ? ` · ${Math.round((d.catalog_received / d.catalog_total) * 100)}% · ${d.catalog_received}/${d.catalog_total} 路`
+      : ''
+  return `${hhmm ? hhmm + ' ' : ''}${d.catalog_last_error}${counts}`
+}
+// 通道点阵（D51）：最多 16 点，超出用 +N 提示；绿=上报在线，灰=上报离线，空心红=缺失
+function channelDots(d: Device): { kind: 'on' | 'off' | 'miss'; title: string }[] {
+  const s: ChannelSummary | null | undefined = d.catalog_channels
+  if (!s || s.total <= 0) return []
+  const dots: { kind: 'on' | 'off' | 'miss'; title: string }[] = []
+  for (let i = 0; i < s.online; i++) dots.push({ kind: 'on', title: '在线' })
+  const off = Math.max(0, s.total - s.online - s.missing)
+  for (let i = 0; i < off; i++) dots.push({ kind: 'off', title: '离线' })
+  for (let i = 0; i < s.missing; i++) dots.push({ kind: 'miss', title: '缺失' })
+  return dots.slice(0, 16)
+}
+function channelOverflow(d: Device): number {
+  const s = d.catalog_channels
+  if (!s) return 0
+  return Math.max(0, s.total - 16)
+}
+function channelSummaryText(d: Device): string {
+  const s = d.catalog_channels
+  if (!s || s.total <= 0) return '—'
+  return `${s.online}/${s.total} 在线`
+}
+// 所属组织只显直接父级，完整路径进 title（D51）
+const orgByID = computed<Map<string, OrgUnit>>(() => {
+  const map = new Map<string, OrgUnit>()
+  const walk = (nodes: OrgUnit[]) => {
+    for (const n of nodes) {
+      map.set(n.id, n)
+      if (n.children?.length) walk(n.children)
+    }
+  }
+  walk(orgFilterTree.value)
+  return map
+})
+function orgDirectName(id?: string | null): string {
+  if (!id) return '未分配'
+  return orgByID.value.get(id)?.name ?? '—'
+}
+function orgFullPath(id?: string | null): string {
+  if (!id) return '未分配'
+  return flatOrgTree.value.find((f) => f.org.id === id)?.path ?? '—'
+}
+
+// 所属租户列：仅平台运维（node_admin）可见（D49）
+const tenants = ref<Tenant[]>([])
+const tenantNameByID = computed<Map<string, string>>(() => {
+  const map = new Map<string, string>()
+  for (const t of tenants.value) map.set(t.id, t.name)
+  return map
+})
+function tenantName(id: string): string {
+  return tenantNameByID.value.get(id) ?? id.slice(0, 8)
+}
+
 onMounted(() => {
   void loadDevices()
   void refreshHealth()
   void me().then((info) => {
     nodeAdmin.value = (info.roles ?? []).includes('node_admin')
+    if (nodeAdmin.value) {
+      void listTenants().then((list) => { tenants.value = list }).catch(() => {})
+    }
     return loadOrgTree()
   }).catch(() => {})
   const timer = window.setInterval(refreshHealth, 30000)
@@ -454,16 +548,14 @@ onMounted(() => {
               <span class="prod-fold-node-name">全部设备</span>
               <span class="prod-fold-node-count mono">{{ devices.length }}</span>
             </button>
-            <button
-              v-for="f in flatOrgTree" :key="f.org.id"
-              class="prod-fold-node" :class="{ active: orgFilter === f.org.id }"
-              type="button" :style="{ paddingLeft: `${f.depth * 16 + 10}px` }"
-              :title="f.path" @click="orgFilter = f.org.id; resetPage()"
-            >
-              <span class="prod-fold-node-icon"><Folder :size="13" /></span>
-              <span class="prod-fold-node-name">{{ f.org.name }}</span>
-              <span class="prod-fold-node-count mono">{{ orgCount(f.org.id) }}</span>
-            </button>
+            <OrgTreeNode
+              :nodes="orgFilterTree"
+              :count-of="orgCount"
+              :active="orgFilter"
+              :collapsed="collapsedOrgs"
+              @select="(id: string) => { orgFilter = id; resetPage() }"
+              @toggle="toggleOrgCollapse"
+            />
             <button v-if="flatOrgTree.length === 0" class="prod-fold-node prod-fold-node-empty" type="button" @click="orgFilter = null; resetPage()">
               <span class="prod-fold-node-name">还没有组织</span>
             </button>
@@ -508,74 +600,93 @@ onMounted(() => {
       </div>
 
       <!-- skeleton -->
-      <div v-else-if="loading" class="prod-table-card" aria-label="加载中">
+      <div v-else-if="loading" class="prod-table-card" :class="{ 'with-tenant': nodeAdmin }" aria-label="加载中">
         <div class="prod-thead" role="row">
-          <div role="columnheader">名称</div>
+          <div role="columnheader">设备</div>
           <div role="columnheader">接入 ID</div>
-          <div role="columnheader">类型</div>
-          <div role="columnheader">厂商</div>
-          <div role="columnheader">状态</div>
-          <div role="columnheader">同步</div>
-          <div role="columnheader">运行时</div>
+          <div v-if="nodeAdmin" role="columnheader">所属租户</div>
+          <div role="columnheader">所属组织</div>
+          <div role="columnheader">通道</div>
+          <div role="columnheader">目录同步</div>
           <div role="columnheader" class="th-actions">操作</div>
         </div>
         <div v-for="n in 6" :key="n" class="prod-trow sk-row" role="row">
           <div role="cell"><span class="sk sk-name" /></div>
           <div role="cell"><span class="sk sk-id" /></div>
+          <div v-if="nodeAdmin" role="cell"><span class="sk sk-pill" /></div>
           <div role="cell"><span class="sk sk-pill" /></div>
-          <div role="cell"><span class="sk sk-name" /></div>
-          <div role="cell"><span class="sk sk-pill" /></div>
-          <div role="cell"><span class="sk sk-pill" /></div>
+          <div role="cell"><span class="sk sk-dots" /></div>
           <div role="cell"><span class="sk sk-pill" /></div>
           <div role="cell"><span class="sk sk-actions" /></div>
         </div>
       </div>
 
       <!-- table -->
-      <div v-else-if="isDesktop && filteredDevices.length > 0" class="prod-table-card">
+      <div v-else-if="isDesktop && filteredDevices.length > 0" class="prod-table-card" :class="{ 'with-tenant': nodeAdmin }">
         <div class="prod-thead" role="row">
-          <div role="columnheader">名称</div>
+          <div role="columnheader">设备</div>
           <div role="columnheader">接入 ID</div>
-          <div role="columnheader">类型</div>
-          <div role="columnheader">厂商</div>
-          <div role="columnheader">状态</div>
-          <div role="columnheader">同步</div>
-          <div role="columnheader">运行时</div>
+          <div v-if="nodeAdmin" role="columnheader">所属租户</div>
+          <div role="columnheader">所属组织</div>
+          <div role="columnheader">通道</div>
+          <div role="columnheader">目录同步</div>
           <div role="columnheader" class="th-actions">操作</div>
         </div>
         <div v-for="device in pageDevices" :key="device.id" class="prod-trow" role="row" @dblclick="openDetail(device)">
           <div role="cell" class="prod-name-cell">
-            <div class="prod-name">{{ device.device_name || '未命名' }}</div>
-            <div class="prod-name-sub mono">{{ device.manufacturer || '—' }}</div>
+            <div class="prod-name-line">
+              <span
+                class="prod-runtime-dot"
+                :class="runtimeState(device) === 'online' ? 'dot-on' : 'dot-off'"
+                :title="runtimeState(device) === 'online' ? '在线' : '离线'"
+              />
+              <span class="prod-name">{{ device.device_name || '未命名' }}</span>
+              <span class="prod-type-tag">{{ deviceTypeLabel(device.device_type) }}</span>
+              <span v-if="!device.enabled" class="prod-disabled-tag">停用</span>
+            </div>
+            <div class="prod-name-sub">{{ device.manufacturer || '—' }}</div>
           </div>
           <div role="cell" class="prod-id-cell mono">{{ device.device_access_id }}</div>
+          <div v-if="nodeAdmin" role="cell" class="prod-tenant-cell">{{ tenantName(device.tenant_id) }}</div>
+          <div role="cell" :title="orgFullPath(device.org_unit_id)">{{ orgDirectName(device.org_unit_id) }}</div>
           <div role="cell">
-            <span class="prod-type">
-              <component :is="typeIcon(device.device_type)" :size="13" />
-              {{ deviceTypeLabel(device.device_type) }}
-            </span>
-          </div>
-          <div role="cell" class="prod-manufacturer">{{ device.manufacturer || '—' }}</div>
-          <div role="cell">
-            <span class="prod-pill" :class="device.enabled ? 'pill-enable' : 'pill-muted'">
-              <span class="pill-dot" :class="device.enabled ? 'dot-online' : 'dot-offline'" />
-              {{ device.enabled ? '启用' : '停用' }}
-            </span>
+            <div v-if="channelDots(device).length" class="prod-channel-cell" :class="{ dead: runtimeState(device) !== 'online' }">
+              <span class="prod-dots" aria-hidden="true">
+                <i v-for="(dot, i) in channelDots(device)" :key="i" class="prod-dot" :class="dot.kind" /><i v-if="channelOverflow(device) > 0" class="prod-dot-overflow mono">+{{ channelOverflow(device) }}</i>
+              </span>
+              <span class="prod-channel-count mono">{{ channelSummaryText(device) }}</span>
+            </div>
+            <span v-else class="prod-channel-none">—</span>
           </div>
           <div role="cell">
-            <span class="prod-pill" :class="device.access_sync_status === 'synced' ? 'pill-synced' : 'pill-pending'">
-              <span class="pill-dot" :class="device.access_sync_status === 'synced' ? 'dot-online' : 'dot-pending'" />
-              {{ syncLabel(device) }}
+            <!-- 四态：✓ 时间·路数 / 圆环+数字 / ✗ 红环停位 / — -->
+            <span v-if="catalogState(device) === 'ok'" class="prod-catalog ok">
+              <Check :size="13" :stroke-width="2.5" />
+              <span class="mono">{{ catalogOkTime(device) }} · {{ device.catalog_last_count ?? '—' }} 路</span>
             </span>
-          </div>
-          <div role="cell">
-            <span class="prod-pill" :class="runtimeState(device) === 'online' ? 'pill-runtime-on' : runtimeState(device) === 'offline' ? 'pill-runtime-off' : 'pill-muted'">
-              <span class="pill-dot" :class="runtimeState(device) === 'online' ? 'dot-online' : 'dot-offline'" />
-              {{ runtimeLabel(device) }}
+            <span v-else-if="catalogState(device) === 'in_progress'" class="prod-catalog ing">
+              <ProgressRing :size="16" :progress="catalogPct(device)" state="ing" />
+              <span v-if="catalogPct(device) >= 0" class="mono">{{ Math.round(catalogPct(device) * 100) }}% · {{ device.catalog_received }}/{{ device.catalog_total }} 路</span>
+              <span v-else>同步中</span>
             </span>
+            <span v-else-if="catalogState(device) === 'failed'" class="prod-catalog bad">
+              <ProgressRing :size="16" :progress="catalogPct(device)" state="fail" />
+              <span class="prod-catalog-error" :title="device.catalog_last_error ?? ''">{{ catalogFailText(device) }}</span>
+            </span>
+            <span v-else class="prod-catalog never">—</span>
           </div>
           <div role="cell" class="td-actions">
             <div class="prod-actions">
+              <button
+                class="prod-act catalog-refresh"
+                type="button"
+                :disabled="catalogState(device) === 'in_progress'"
+                :title="catalogState(device) === 'in_progress' ? '目录同步中' : '刷新目录（即将上线）'"
+                aria-label="刷新目录"
+                @click="flashMessage('目录刷新将在下一版本提供')"
+              >
+                <RefreshCw :size="15" :class="{ spinning: catalogState(device) === 'in_progress' }" />
+              </button>
               <button class="prod-act" type="button" title="查看详情" aria-label="查看详情" @click="openDetail(device)"><Eye :size="15" /></button>
               <button class="prod-act" type="button" title="编辑" aria-label="编辑" @click="openEdit(device)"><Edit3 :size="15" /></button>
               <button class="prod-act" type="button" :disabled="busy[device.id] === 'toggle'" :title="device.enabled ? '停用' : '启用'" :aria-label="device.enabled ? '停用' : '启用'" @click="toggleEnabled(device)">
@@ -591,23 +702,19 @@ onMounted(() => {
       <div v-else-if="!isDesktop && filteredDevices.length > 0" class="prod-card-list" aria-label="设备列表">
         <div v-for="device in pageDevices" :key="device.id" class="prod-card-item">
           <div class="prod-card-main">
-            <span class="prod-card-name">{{ device.device_name || '未命名' }}</span>
-            <span class="prod-card-sub mono">{{ deviceTypeLabel(device.device_type) }} · {{ device.manufacturer || '—' }}</span>
+            <span class="prod-card-name">
+              <span class="prod-runtime-dot" :class="runtimeState(device) === 'online' ? 'dot-on' : 'dot-off'" />
+              {{ device.device_name || '未命名' }}
+            </span>
+            <span class="prod-card-sub">{{ deviceTypeLabel(device.device_type) }} · {{ device.manufacturer || '—' }} · {{ orgDirectName(device.org_unit_id) }}</span>
           </div>
           <div class="prod-card-id mono">{{ device.device_access_id }}</div>
           <div class="prod-card-status">
-            <span class="prod-pill" :class="device.enabled ? 'pill-enable' : 'pill-muted'">
-              <span class="pill-dot" :class="device.enabled ? 'dot-online' : 'dot-offline'" />
-              {{ device.enabled ? '启用' : '停用' }}
-            </span>
-            <span class="prod-pill" :class="device.access_sync_status === 'synced' ? 'pill-synced' : 'pill-pending'">
-              <span class="pill-dot" :class="device.access_sync_status === 'synced' ? 'dot-online' : 'dot-pending'" />
-              {{ syncLabel(device) }}
-            </span>
-            <span class="prod-pill" :class="runtimeState(device) === 'online' ? 'pill-runtime-on' : runtimeState(device) === 'offline' ? 'pill-runtime-off' : 'pill-muted'">
-              <span class="pill-dot" :class="runtimeState(device) === 'online' ? 'dot-online' : 'dot-offline'" />
-              {{ runtimeLabel(device) }}
-            </span>
+            <span v-if="!device.enabled" class="prod-pill pill-muted">停用</span>
+            <span v-if="channelDots(device).length" class="prod-channel-count mono" :class="{ dead: runtimeState(device) !== 'online' }">{{ channelSummaryText(device) }}</span>
+            <span v-if="catalogState(device) === 'ok'" class="prod-pill pill-synced">目录 ✓ {{ device.catalog_last_count ?? '—' }} 路</span>
+            <span v-else-if="catalogState(device) === 'in_progress'" class="prod-pill pill-pending">目录同步中</span>
+            <span v-else-if="catalogState(device) === 'failed'" class="prod-pill pill-failed">目录同步失败</span>
           </div>
           <div class="prod-card-actions">
             <button class="prod-act" type="button" title="查看详情" aria-label="查看详情" @click="openDetail(device)"><Eye :size="18" /></button>
@@ -806,14 +913,14 @@ onMounted(() => {
                 <div><dt>SIP Realm</dt><dd class="mono">{{ detailDevice.sip_realm }}</dd></div>
                 <div><dt>认证算法</dt><dd>{{ detailDevice.digest_algorithm }}</dd></div>
                 <div><dt>启用状态</dt><dd>{{ detailDevice.enabled ? '启用' : '停用' }}</dd></div>
-                <div><dt>同步状态</dt><dd>{{ syncLabel(detailDevice) }}</dd></div>
-                <div><dt>同步版本</dt><dd class="mono">{{ detailDevice.access_synced_version ?? '—' }}</dd></div>
                 <div><dt>运行时状态</dt><dd>
-                  <span class="prod-pill" :class="runtimeState(detailDevice) === 'online' ? 'pill-runtime-on' : runtimeState(detailDevice) === 'offline' ? 'pill-runtime-off' : 'pill-muted'">
-                    <span class="pill-dot" :class="runtimeState(detailDevice) === 'online' ? 'dot-online' : 'dot-offline'" />
+                  <span class="prod-pill" :class="runtimeState(detailDevice) === 'online' ? 'pill-runtime-on' : 'pill-runtime-off'">
                     {{ runtimeLabel(detailDevice) }}
                   </span>
                 </dd></div>
+                <div><dt>目录同步</dt><dd>{{ catalogState(detailDevice) === 'ok' ? `✓ ${catalogOkTime(detailDevice)} · ${detailDevice.catalog_last_count ?? '—'} 路` : catalogState(detailDevice) === 'in_progress' ? '同步中' : catalogState(detailDevice) === 'failed' ? '失败' : '从未同步' }}</dd></div>
+                <div v-if="catalogState(detailDevice) === 'failed' && detailDevice.catalog_last_error"><dt>同步错误</dt><dd>{{ detailDevice.catalog_last_error }}</dd></div>
+                <div><dt>配置同步</dt><dd>{{ syncLabel(detailDevice) }} · 版本 <span class="mono">{{ detailDevice.access_synced_version ?? '—' }}</span></dd></div>
                 <div v-if="detailDevice.runtime?.last_seen"><dt>最近活跃</dt><dd class="mono">{{ detailDevice.runtime.last_seen }}</dd></div>
                 <div v-if="detailDevice.runtime?.remote_address"><dt>远端地址</dt><dd class="mono">{{ detailDevice.runtime.remote_address }}</dd></div>
                 <div><dt>创建时间</dt><dd class="mono">{{ detailDevice.created_at }}</dd></div>
@@ -839,8 +946,9 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.prod-shell { min-height: 100vh; background: #F2F2F7; color: #1C1C1E; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
-/* ---------- topbar ---------- */
+/* 颜色一律引用 main.css 设计令牌（design-system spec）；顶栏深色铬合金为既有设计，双模式下保持深色。 */
+.prod-shell { min-height: 100vh; background: var(--bg-page); color: var(--text-primary); font-family: var(--font-sans); }
+/* ---------- topbar（深色铬合金，双模式一致） ---------- */
 .prod-topbar { display: flex; align-items: center; gap: 30px; padding: 0 32px; height: 62px; background: #11161c; color: #e8ebee; border-bottom: 1px solid #1f2730; position: sticky; top: 0; z-index: 30; }
 .prod-brand { display: flex; align-items: center; gap: 11px; }
 .prod-logo { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; color: #fff; background: linear-gradient(135deg, #2d3742, #1c242d); border: 1px solid #333f4b; border-radius: 9px; }
@@ -867,176 +975,201 @@ onMounted(() => {
 .prod-main { max-width: 1200px; margin: 0 auto; padding: 0 32px 64px; }
 
 /* ---------- glass sticky title bar ---------- */
-.prod-head { position: sticky; top: 62px; z-index: 10; background: rgba(255,255,255,0.85); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(0,0,0,0.05); }
+.prod-head { position: sticky; top: 62px; z-index: 10; background: color-mix(in srgb, var(--bg-card) 85%, transparent); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border-faint); }
 .prod-head-inner { max-width: 1200px; margin: 0 auto; padding: 20px 32px; display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
-.prod-head h1 { margin: 0; font-size: 28px; font-weight: 700; color: #1C1C1E; letter-spacing: -0.8px; }
+.prod-head h1 { margin: 0; font-size: 28px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.01em; }
 /* ---------- toast ---------- */
-.prod-flash { display: inline-flex; align-items: center; gap: 8px; margin-top: 18px; padding: 10px 15px; color: #1d714e; background: #ecf7f1; border: 1px solid #c5e6d5; border-radius: 9px; font-size: 13px; font-weight: 600; box-shadow: 0 4px 14px rgba(29,113,78,.08); }
+.prod-flash { display: inline-flex; align-items: center; gap: 8px; margin-top: 18px; padding: 10px 15px; color: var(--success); background: var(--success-bg); border: 1px solid var(--success-border); border-radius: 9px; font-size: 13px; font-weight: 600; box-shadow: 0 4px 14px rgba(29,113,78,.08); }
 .toast-enter-active, .toast-leave-active { transition: opacity .2s, transform .2s; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(-6px); }
 /* ---------- metrics ---------- */
 .prod-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 28px; }
-.prod-stat { display: flex; flex-direction: column; gap: 12px; padding: 20px 24px; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
-.prod-stat-label { display: inline-flex; align-items: center; gap: 8px; color: #8E8E93; font-size: 13px; font-weight: 500; }
+.prod-stat { display: flex; flex-direction: column; gap: 12px; padding: 20px 24px; background: var(--bg-card); border: 1px solid var(--border-card); border-radius: var(--r-xl); box-shadow: var(--shadow-card); }
+.prod-stat-label { display: inline-flex; align-items: center; gap: 8px; color: var(--text-tertiary); font-size: 13px; font-weight: 500; }
 .stat-dot { width: 8px; height: 8px; border-radius: 50%; }
-.dot-online { background: #34C759; box-shadow: 0 0 0 3px rgba(52,199,89,0.15); }
-.dot-offline { background: #C7C7CC; }
-.dot-sync { background: #34C759; box-shadow: 0 0 0 3px rgba(52,199,89,0.15); }
-.dot-pending { background: #FFCC00; box-shadow: 0 0 0 3px rgba(255,204,0,0.18); }
-.prod-stat-value { font-size: 32px; font-weight: 700; letter-spacing: -1px; line-height: 1; color: #1C1C1E; font-variant-numeric: tabular-nums; }
+.dot-online { background: var(--accent-green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-green) 15%, transparent); }
+.dot-offline { background: var(--text-muted); }
+.dot-sync { background: var(--accent-green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-green) 15%, transparent); }
+.dot-pending { background: var(--accent-yellow); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-yellow) 18%, transparent); }
+.prod-stat-value { font-size: 32px; font-weight: 700; letter-spacing: -1px; line-height: 1; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 
 /* ---------- search & filter card ---------- */
-.prod-toolbar-card { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; padding: 16px 20px; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.prod-toolbar-card { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; padding: 16px 20px; background: var(--bg-card); border: 1px solid var(--border-card); border-radius: var(--r-xl); box-shadow: var(--shadow-card); }
 .prod-search { position: relative; flex: 1; min-width: 240px; }
-.prod-search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #C7C7CC; pointer-events: none; }
-.prod-search input { width: 100%; padding: 10px 14px 10px 40px; border: 1.5px solid #E5E5EA; border-radius: 12px; font-size: 15px; color: #1C1C1E; background: #FAFAFA; outline: none; box-sizing: border-box; letter-spacing: -0.2px; font-family: inherit; transition: border-color .15s, background .15s, box-shadow .15s; }
-.prod-search input::placeholder { color: #C7C7CC; }
-.prod-search input:focus { border-color: #C7C7CC; background: #fff; box-shadow: 0 0 0 3px rgba(0,122,255,.12); }
-.prod-search-clear { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; color: #8E8E93; background: none; border: 0; border-radius: 999px; cursor: pointer; }
-.prod-search-clear:hover { color: #1C1C1E; background: #F2F2F7; }
-.prod-select { height: 40px; padding: 0 14px; font: inherit; font-size: 13px; font-weight: 500; color: #3A3A3C; background: #fff; border: 1.5px solid #E5E5EA; border-radius: 12px; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
-.prod-select:focus-visible { outline: none; border-color: #007AFF; box-shadow: 0 0 0 3px rgba(0,122,255,.15); }
+.prod-search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none; }
+.prod-search input { width: 100%; padding: 10px 14px 10px 40px; border: 1.5px solid var(--border-input); border-radius: 12px; font-size: 15px; color: var(--text-primary); background: var(--bg-input); outline: none; box-sizing: border-box; letter-spacing: -0.2px; font-family: inherit; transition: border-color .15s, background .15s, box-shadow .15s; }
+.prod-search input::placeholder { color: var(--text-muted); }
+.prod-search input:focus { border-color: var(--border-hover); background: var(--bg-card); box-shadow: 0 0 0 3px var(--focus-ring); }
+.prod-search-clear { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; color: var(--text-tertiary); background: none; border: 0; border-radius: 999px; cursor: pointer; }
+.prod-search-clear:hover { color: var(--text-primary); background: var(--bg-hover); }
+.prod-select { height: 40px; padding: 0 14px; font: inherit; font-size: 13px; font-weight: 500; color: var(--text-secondary); background: var(--bg-card); border: 1.5px solid var(--border-input); border-radius: 12px; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.prod-select:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
 .prod-pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.prod-pill { padding: 8px 16px; border: 1px solid #E5E5EA; border-radius: 999px; font-size: 13px; font-weight: 500; letter-spacing: -0.2px; color: #636366; background: #F2F2F7; cursor: pointer; font-family: inherit; transition: background .15s, color .15s, border-color .15s; }
-.prod-pill:hover { border-color: #C7C7CC; }
-.prod-pill.active { background: #1C1C1E; color: #fff; border-color: #1C1C1E; font-weight: 600; }
-.prod-pill:focus-visible { outline: 2px solid #007AFF; outline-offset: 2px; }
-.prod-refresh { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0; color: #636366; background: #fff; border: 1.5px solid #E5E5EA; border-radius: 10px; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
-.prod-refresh:hover:not(:disabled) { background: #F2F2F7; border-color: #C7C7CC; }
+.prod-pill { padding: 8px 16px; border: 1px solid var(--border-input); border-radius: 999px; font-size: 13px; font-weight: 500; letter-spacing: -0.2px; color: var(--text-secondary); background: var(--bg-subtle); cursor: pointer; font-family: inherit; transition: background .15s, color .15s, border-color .15s; }
+.prod-pill:hover { border-color: var(--border-hover); }
+.prod-pill.active { background: var(--btn-primary-bg); color: var(--bg-card); border-color: var(--btn-primary-bg); font-weight: 600; }
+.prod-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.prod-refresh { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0; color: var(--text-secondary); background: var(--bg-card); border: 1.5px solid var(--border-input); border-radius: var(--r-sm); cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
+.prod-refresh:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-hover); }
 .prod-refresh:disabled { cursor: wait; opacity: .5; }
-.prod-refresh:focus-visible { outline: 2px solid #007AFF; outline-offset: 2px; }
+.prod-refresh:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* ---------- buttons ---------- */
-.prod-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 20px; color: #1C1C1E; background: #fff; border: 1px solid #E5E5EA; border-radius: 999px; font-size: 14px; font-weight: 600; cursor: pointer; transition: border-color .15s, background .15s, transform .05s; }
-.prod-button:hover:not(:disabled) { border-color: #C7C7CC; }
+.prod-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 20px; color: var(--text-primary); background: var(--bg-card); border: 1px solid var(--border-input); border-radius: 999px; font-size: 14px; font-weight: 600; cursor: pointer; transition: border-color .15s, background .15s, transform .05s; }
+.prod-button:hover:not(:disabled) { border-color: var(--border-hover); }
 .prod-button:active:not(:disabled) { transform: scale(.985); }
 .prod-button:disabled { cursor: wait; opacity: .6; }
-.prod-button-primary { color: #fff; background: #1C1C1E; border-color: #1C1C1E; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
-.prod-button-primary:hover:not(:disabled) { background: #2c2c2e; border-color: #2c2c2e; }
-.prod-button:focus-visible { outline: 2px solid #007AFF; outline-offset: 2px; }
-.prod-icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; color: #5f6873; background: #fff; border: 1px solid #d9dee4; border-radius: 9px; cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
-.prod-icon:hover:not(:disabled) { color: #1a1f26; border-color: #aeb7c1; }
-.prod-icon.danger:hover:not(:disabled) { color: #b44444; border-color: #e9c1c1; background: #fdf6f6; }
+.prod-button-primary { color: var(--bg-card); background: var(--btn-primary-bg); border-color: var(--btn-primary-bg); box-shadow: var(--shadow-button); }
+.prod-button-primary:hover:not(:disabled) { background: var(--btn-primary-hover); border-color: var(--btn-primary-hover); }
+.prod-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.prod-icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; color: var(--text-secondary); background: var(--bg-card); border: 1px solid var(--border-input); border-radius: 9px; cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
+.prod-icon:hover:not(:disabled) { color: var(--text-primary); border-color: var(--border-hover); }
+.prod-icon.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger-border); background: var(--danger-bg); }
 .prod-icon:disabled { cursor: not-allowed; opacity: .45; }
 /* ---------- table ---------- */
-.prod-table-card { margin-bottom: 16px; overflow-x: auto; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
-.prod-thead, .prod-trow { display: grid; grid-template-columns: 2fr 2.2fr 1fr 1.2fr 1fr 1fr 1fr 100px; align-items: center; min-width: 960px; }
-.prod-thead { padding: 14px 24px; background: #FAFAFA; border-bottom: 1px solid #F2F2F7; font-size: 12px; font-weight: 600; color: #8E8E93; text-transform: uppercase; letter-spacing: 0.5px; }
+.prod-table-card { margin-bottom: 16px; overflow-x: auto; background: var(--bg-card); border: 1px solid var(--border-card); border-radius: var(--r-xl); box-shadow: var(--shadow-card); }
+.prod-thead, .prod-trow { display: grid; grid-template-columns: 2fr 2fr 1.2fr 1.7fr 1.9fr 178px; align-items: center; min-width: 980px; }
+.prod-table-card.with-tenant .prod-thead, .prod-table-card.with-tenant .prod-trow { grid-template-columns: 2fr 2fr 1.1fr 1.1fr 1.5fr 1.9fr 178px; min-width: 1100px; }
+.prod-thead { padding: 14px 24px; background: var(--bg-table-header); border-bottom: 1px solid var(--border-faint); font-size: 12px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; }
 .prod-thead .th-actions { text-align: right; }
-.prod-trow { padding: 16px 24px; border-bottom: 1px solid #F2F2F7; background: #fff; transition: background 0.15s; }
+.prod-trow { padding: 16px 24px; border-bottom: 1px solid var(--border-faint); background: var(--bg-card); transition: background 0.15s; }
 .prod-trow:last-child { border-bottom: 0; }
-.prod-trow:hover { background: #FAFAFA; }
+.prod-trow:hover { background: var(--bg-hover); }
 .prod-name-cell { min-width: 0; }
-.prod-name { font-weight: 600; color: #1C1C1E; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prod-name-sub { margin-top: 3px; color: #8E8E93; font-size: 11px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prod-id-cell { color: #3A3A3C; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.prod-type { display: inline-flex; align-items: center; gap: 6px; color: #3A3A3C; white-space: nowrap; }
-.prod-type svg { color: #C7C7CC; }
-.prod-manufacturer { color: #3A3A3C; }
+.prod-name-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.prod-runtime-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.prod-runtime-dot.dot-on { background: var(--accent-green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-green) 15%, transparent); }
+.prod-runtime-dot.dot-off { background: var(--text-muted); }
+.prod-name { font-weight: 600; color: var(--text-primary); max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prod-type-tag { flex-shrink: 0; padding: 2px 7px; border-radius: 999px; background: var(--bg-subtle); color: var(--text-tertiary); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.prod-disabled-tag { flex-shrink: 0; padding: 2px 7px; border-radius: 999px; background: var(--danger-bg); color: var(--danger); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.prod-name-sub { margin-top: 3px; color: var(--text-tertiary); font-size: 11px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prod-id-cell { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prod-tenant-cell { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 通道点阵（D51） */
+.prod-channel-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.prod-channel-cell.dead { opacity: .55; }
+.prod-dots { display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; }
+.prod-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.prod-dot.on { background: var(--accent-green); }
+.prod-dot.off { background: var(--text-muted); }
+.prod-dot.miss { background: transparent; border: 1.5px solid var(--accent-red); box-sizing: border-box; }
+.prod-dot-overflow { color: var(--text-tertiary); font-size: 10px; }
+.prod-channel-count { color: var(--text-tertiary); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.prod-channel-count.dead { color: var(--text-tertiary); opacity: .8; }
+.prod-channel-none { color: var(--text-muted); font-size: 13px; }
+/* 目录同步四态（D51）：数字段 tabular-nums 固定宽度防抖动 */
+.prod-catalog { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 13px; font-variant-numeric: tabular-nums; }
+.prod-catalog.ok { color: var(--text-tertiary); }
+.prod-catalog.ok svg { color: var(--accent-green); }
+.prod-catalog.ing { color: var(--text-primary); }
+.prod-catalog.bad { color: var(--danger); }
+.prod-catalog.never { color: var(--text-muted); font-size: 13px; }
+.prod-catalog-error { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .prod-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .pill-dot { width: 6px; height: 6px; border-radius: 50%; }
-.pill-enable { color: #1d714e; background: #E9F6EF; }
-.pill-muted { color: #65707b; background: #F0F2F4; }
-.pill-synced { color: #1d714e; background: #E9F6EF; }
-.pill-pending { color: #92400e; background: #FDF0E0; }
-.pill-runtime-on { color: #1d714e; background: #E9F6EF; }
-.pill-runtime-off { color: #65707b; background: #F0F2F4; }
-.dot-online { background: #34C759; }
-.dot-offline { background: #C7C7CC; }
-.dot-pending { background: #FFCC00; }
+.pill-enable { color: var(--success); background: var(--success-bg); }
+.pill-muted { color: var(--text-secondary); background: var(--bg-subtle); }
+.pill-synced { color: var(--success); background: var(--success-bg); }
+.pill-pending { color: var(--warning); background: var(--warning-bg); }
+.pill-failed { color: var(--danger); background: var(--danger-bg); }
+.pill-runtime-on { color: var(--success); background: var(--success-bg); }
+.pill-runtime-off { color: var(--text-secondary); background: var(--bg-subtle); }
 .td-actions { text-align: right; }
 .prod-actions { display: inline-flex; gap: 4px; opacity: 0; transition: opacity .15s; }
 .prod-trow:hover .prod-actions, .prod-actions:focus-within { opacity: 1; }
-.prod-act { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: #8E8E93; background: transparent; border: 0; border-radius: 8px; cursor: pointer; transition: all 0.15s; }
-.prod-act:hover:not(:disabled) { background: #F2F2F7; color: #1C1C1E; }
-.prod-act.danger:hover:not(:disabled) { background: #FFF2F2; color: #FF3B30; }
+.prod-act { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: var(--text-tertiary); background: transparent; border: 0; border-radius: 8px; cursor: pointer; transition: all 0.15s; }
+.prod-act:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+.prod-act.danger:hover:not(:disabled) { background: var(--danger-bg); color: var(--accent-red); }
 .prod-act:disabled { cursor: not-allowed; opacity: .4; }
-.prod-act:focus-visible { outline: 2px solid #007AFF; outline-offset: 1px; }
+.prod-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.prod-act.catalog-refresh { color: var(--text-secondary); }
 /* ---------- skeleton ---------- */
 .sk-row { padding: 16px 24px; }
-.sk { display: inline-block; background: linear-gradient(90deg, #F2F2F7 25%, #FAFAFA 37%, #F2F2F7 63%); background-size: 400% 100%; animation: sk-shimmer 1.3s ease infinite; border-radius: 6px; }
+.sk { display: inline-block; background: linear-gradient(90deg, var(--bg-subtle) 25%, var(--bg-hover) 37%, var(--bg-subtle) 63%); background-size: 400% 100%; animation: sk-shimmer 1.3s ease infinite; border-radius: 6px; }
 .sk-name { width: 120px; height: 14px; }
 .sk-id { width: 150px; height: 12px; }
 .sk-pill { width: 56px; height: 20px; border-radius: 999px; }
+.sk-dots { width: 90px; height: 14px; }
 .sk-actions { width: 130px; height: 28px; }
 @keyframes sk-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 /* ---------- error ---------- */
-.prod-error { display: flex; align-items: center; gap: 13px; margin-bottom: 16px; padding: 15px 18px; color: #a14444; background: #fdf2f2; border: 1px solid #f2d6d6; border-radius: 16px; }
+.prod-error { display: flex; align-items: center; gap: 13px; margin-bottom: 16px; padding: 15px 18px; color: var(--danger); background: var(--danger-bg); border: 1px solid var(--danger-border); border-radius: var(--r-xl); }
 .prod-error svg { flex-shrink: 0; }
 .prod-error strong { font-size: 13.5px; }
-.prod-error p { margin: 3px 0 0; color: #b06565; font-size: 12.5px; }
-.prod-error .prod-button { margin-left: auto; color: #a14444; border-color: #e9c1c1; }
+.prod-error p { margin: 3px 0 0; color: var(--danger); opacity: .8; font-size: 12.5px; }
+.prod-error .prod-button { margin-left: auto; color: var(--danger); border-color: var(--danger-border); }
 .prod-form .prod-error { margin-top: 14px; }
 /* ---------- mobile card list ---------- */
 .prod-card-list { display: flex; flex-direction: column; gap: 12px; }
-.prod-card-item { display: flex; flex-direction: column; gap: 8px; padding: 16px; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.prod-card-item { display: flex; flex-direction: column; gap: 8px; padding: 16px; background: var(--bg-card); border: 1px solid var(--border-card); border-radius: var(--r-xl); box-shadow: var(--shadow-card); }
 .prod-card-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.prod-card-name { font-size: 15px; font-weight: 600; color: #1C1C1E; }
-.prod-card-sub { font-size: 12px; color: #8E8E93; }
-.prod-card-id { font-size: 12px; color: #3A3A3C; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prod-card-status { display: flex; flex-wrap: wrap; gap: 6px; }
+.prod-card-name { font-size: 15px; font-weight: 600; color: var(--text-primary); display: inline-flex; align-items: center; gap: 8px; }
+.prod-card-sub { font-size: 12px; color: var(--text-tertiary); }
+.prod-card-id { font-size: 12px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prod-card-status { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .prod-card-actions { display: flex; gap: 6px; margin-top: 2px; }
 .prod-card-actions .prod-act { width: 44px; height: 44px; }
 /* ---------- empty ---------- */
-.prod-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 16px; padding: 52px 20px; text-align: center; background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
-.prod-empty-icon { display: inline-flex; align-items: center; justify-content: center; width: 52px; height: 52px; margin-bottom: 6px; color: #8E8E93; background: #F2F2F7; border-radius: 999px; }
-.prod-empty strong { font-size: 14.5px; color: #1C1C1E; }
-.prod-empty p { margin: 0 0 10px; color: #8E8E93; font-size: 13px; }
+.prod-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 16px; padding: 52px 20px; text-align: center; background: var(--bg-card); border: 1px solid var(--border-card); border-radius: var(--r-xl); box-shadow: var(--shadow-card); }
+.prod-empty-icon { display: inline-flex; align-items: center; justify-content: center; width: 52px; height: 52px; margin-bottom: 6px; color: var(--text-tertiary); background: var(--bg-subtle); border-radius: 999px; }
+.prod-empty strong { font-size: 14.5px; color: var(--text-primary); }
+.prod-empty p { margin: 0 0 10px; color: var(--text-tertiary); font-size: 13px; }
 /* ---------- pagination ---------- */
 .prod-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding: 0 4px; }
-.prod-page-count { color: #8E8E93; font-size: 12px; }
+.prod-page-count { color: var(--text-tertiary); font-size: 12px; }
 .prod-page-btns { display: flex; align-items: center; gap: 8px; }
-.prod-page-info { color: #3A3A3C; font-size: 12px; }
-.prod-page-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: #8E8E93; background: #fff; border: 1px solid #E5E5EA; border-radius: 8px; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
-.prod-page-btn:hover:not(:disabled) { background: #F2F2F7; color: #1C1C1E; }
+.prod-page-info { color: var(--text-secondary); font-size: 12px; }
+.prod-page-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: var(--text-tertiary); background: var(--bg-card); border: 1px solid var(--border-input); border-radius: 8px; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
+.prod-page-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
 .prod-page-btn:disabled { cursor: not-allowed; opacity: .45; }
-.prod-page-btn:focus-visible { outline: 2px solid #007AFF; outline-offset: 1px; }
+.prod-page-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* ---------- overlay / modal / drawer ---------- */
 .prod-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0,0,0,.4); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
-.prod-modal { width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto; background: #fff; border-radius: 16px; box-shadow: 0 24px 64px rgba(0,0,0,.28); }
+.prod-modal { width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto; background: var(--bg-card); border-radius: var(--r-xl); box-shadow: var(--shadow-xl); }
 .prod-modal-narrow { max-width: 480px; }
-.prod-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 19px 22px; border-bottom: 1px solid #eef0f3; }
+.prod-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 19px 22px; border-bottom: 1px solid var(--border-faint); }
 .prod-modal-head h2 { margin: 0; font-size: 16.5px; display: flex; align-items: center; gap: 10px; }
-.prod-type-badge { display: inline-block; padding: 3px 9px; color: #1a1f26; background: #eef1f4; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+.prod-type-badge { display: inline-block; padding: 3px 9px; color: var(--text-primary); background: var(--bg-subtle); border-radius: 999px; font-size: 11.5px; font-weight: 700; }
 .prod-form { padding: 20px 22px; }
 .prod-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .prod-field { display: grid; gap: 6px; }
 .prod-field-full { grid-column: 1 / -1; }
-.prod-field label { font-size: 12px; font-weight: 700; color: #5f6873; }
-.prod-field input { width: 100%; padding: 10px 11px; font: inherit; font-size: 13.5px; color: #1a1f26; background: #fff; border: 1px solid #d9dee4; border-radius: 8px; box-sizing: border-box; transition: border-color .15s, box-shadow .15s; }
-.prod-field input:focus-visible { outline: none; border-color: #1a1f26; box-shadow: 0 0 0 3px rgba(26,31,38,.1); }
+.prod-field label { font-size: 12px; font-weight: 700; color: var(--text-secondary); }
+.prod-field input { width: 100%; padding: 10px 11px; font: inherit; font-size: 13.5px; color: var(--text-primary); background: var(--bg-card); border: 1px solid var(--border-input); border-radius: 8px; box-sizing: border-box; transition: border-color .15s, box-shadow .15s; }
+.prod-field input:focus-visible { outline: none; border-color: var(--text-primary); box-shadow: 0 0 0 3px var(--focus-ring); }
 .prod-select-full { width: 100%; }
-.prod-select-full:focus-visible { outline: none; border-color: #1a1f26; box-shadow: 0 0 0 3px rgba(26,31,38,.1); }
-.prod-checkbox { display: inline-flex; align-items: center; gap: 8px; font-size: 13px !important; font-weight: 600 !important; color: #1a1f26 !important; padding-top: 22px; cursor: pointer; }
+.prod-select-full:focus-visible { outline: none; border-color: var(--text-primary); box-shadow: 0 0 0 3px var(--focus-ring); }
+.prod-checkbox { display: inline-flex; align-items: center; gap: 8px; font-size: 13px !important; font-weight: 600 !important; color: var(--text-primary) !important; padding-top: 22px; cursor: pointer; }
 .prod-input-action { display: flex; gap: 6px; }
 .prod-input-action input { flex: 1; }
 .prod-manufacturer { position: relative; }
-.prod-manufacturer-menu { position: absolute; z-index: 60; top: calc(100% + 4px); left: 0; right: 0; max-height: 220px; overflow-y: auto; padding: 6px; background: #fff; border: 1px solid #d9dee4; border-radius: 9px; box-shadow: 0 10px 28px rgba(13,18,24,.16); }
-.prod-manufacturer-option { display: block; width: 100%; padding: 9px 10px; text-align: left; color: #1a1f26; background: none; border: 0; border-radius: 6px; font-size: 13px; cursor: pointer; }
-.prod-manufacturer-option:hover { background: #f1f3f5; }
-.prod-manufacturer-add { display: block; width: 100%; padding: 9px 10px; margin-top: 4px; text-align: left; color: #1a1f26; background: none; border: 0; border-top: 1px solid #e7eaed; border-radius: 0; font-size: 13px; font-weight: 600; cursor: pointer; }
-.prod-manufacturer-add:hover { color: #0a6dd4; }
+.prod-manufacturer-menu { position: absolute; z-index: 60; top: calc(100% + 4px); left: 0; right: 0; max-height: 220px; overflow-y: auto; padding: 6px; background: var(--bg-card); border: 1px solid var(--border-input); border-radius: 9px; box-shadow: var(--shadow-lg); }
+.prod-manufacturer-option { display: block; width: 100%; padding: 9px 10px; text-align: left; color: var(--text-primary); background: none; border: 0; border-radius: 6px; font-size: 13px; cursor: pointer; }
+.prod-manufacturer-option:hover { background: var(--bg-hover); }
+.prod-manufacturer-add { display: block; width: 100%; padding: 9px 10px; margin-top: 4px; text-align: left; color: var(--text-primary); background: none; border: 0; border-top: 1px solid var(--border-faint); border-radius: 0; font-size: 13px; font-weight: 600; cursor: pointer; }
+.prod-manufacturer-add:hover { color: var(--accent); }
 .prod-manufacturer-add:disabled { cursor: not-allowed; opacity: .5; }
-.prod-manufacturer-new { width: 100%; padding: 8px 10px; font: inherit; font-size: 13px; color: #1a1f26; background: #fff; border: 1px solid #d9dee4; border-radius: 6px; box-sizing: border-box; }
-.prod-code-preview { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; padding: 10px 12px; color: #5f6873; background: #f4f6f8; border-radius: 8px; }
+.prod-manufacturer-new { width: 100%; padding: 8px 10px; font: inherit; font-size: 13px; color: var(--text-primary); background: var(--bg-card); border: 1px solid var(--border-input); border-radius: 6px; box-sizing: border-box; }
+.prod-code-preview { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; padding: 10px 12px; color: var(--text-secondary); background: var(--bg-subtle); border-radius: 8px; }
 .prod-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
-.prod-meta-hint { margin: 0; color: #8a939d; font-size: 12px; }
+.prod-meta-hint { margin: 0; color: var(--text-tertiary); font-size: 12px; }
 .prod-type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 20px 22px; }
-.prod-type-card { display: grid; gap: 5px; padding: 17px 16px; text-align: left; color: #1a1f26; background: #f8f9fa; border: 1px solid #e1e5e9; border-radius: 10px; cursor: pointer; transition: border-color .15s, background .15s, transform .05s; }
-.prod-type-card:hover { border-color: #1a1f26; background: #fff; }
+.prod-type-card { display: grid; gap: 5px; padding: 17px 16px; text-align: left; color: var(--text-primary); background: var(--bg-subtle); border: 1px solid var(--border-input); border-radius: var(--r-sm); cursor: pointer; transition: border-color .15s, background .15s, transform .05s; }
+.prod-type-card:hover { border-color: var(--text-primary); background: var(--bg-card); }
 .prod-type-card:active { transform: translateY(1px); }
-.prod-type-card-icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; margin-bottom: 4px; color: #1a1f26; background: #fff; border: 1px solid #e1e5e9; border-radius: 8px; }
+.prod-type-card-icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; margin-bottom: 4px; color: var(--text-primary); background: var(--bg-card); border: 1px solid var(--border-input); border-radius: 8px; }
 .prod-type-card strong { font-size: 14.5px; }
-.prod-type-card .mono { color: #8a939d; }
+.prod-type-card .mono { color: var(--text-tertiary); }
 .prod-drawer-overlay { justify-content: flex-end; padding: 0; }
-.prod-drawer { width: 100%; max-width: 440px; height: 100vh; overflow-y: auto; background: #fff; box-shadow: -24px 0 64px rgba(0,0,0,.18); border-radius: 20px 0 0 20px; }
-.prod-drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 22px 24px; border-bottom: 1px solid #eef0f3; }
+.prod-drawer { width: 100%; max-width: 440px; height: 100vh; overflow-y: auto; background: var(--bg-card); box-shadow: -24px 0 64px rgba(0,0,0,.18); border-radius: 20px 0 0 20px; }
+.prod-drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 22px 24px; border-bottom: 1px solid var(--border-faint); }
 .prod-drawer-title { display: flex; align-items: center; gap: 12px; }
-.prod-drawer-icon { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; color: #1a1f26; background: #f1f3f5; border: 1px solid #e4e7eb; border-radius: 10px; }
+.prod-drawer-icon { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; color: var(--text-primary); background: var(--bg-subtle); border: 1px solid var(--border-input); border-radius: var(--r-sm); }
 .prod-drawer-title h2 { margin: 0 0 5px; font-size: 17.5px; }
 .prod-detail-list { margin: 0; padding: 8px 24px 16px; }
-.prod-detail-list div { display: flex; justify-content: space-between; gap: 16px; padding: 11.5px 0; border-bottom: 1px solid #f0f2f4; font-size: 13px; }
-.prod-detail-list dt { color: #7a838e; flex-shrink: 0; }
-.prod-detail-list dd { margin: 0; color: #1a1f26; text-align: right; word-break: break-all; }
+.prod-detail-list div { display: flex; justify-content: space-between; gap: 16px; padding: 11.5px 0; border-bottom: 1px solid var(--border-faint); font-size: 13px; }
+.prod-detail-list dt { color: var(--text-tertiary); flex-shrink: 0; }
+.prod-detail-list dd { margin: 0; color: var(--text-primary); text-align: right; word-break: break-all; }
 .prod-drawer-actions { padding: 16px 24px 24px; }
 /* ---------- modal & drawer transitions ---------- */
 .modal-enter-active, .modal-leave-active { transition: opacity .18s; }
@@ -1048,31 +1181,31 @@ onMounted(() => {
 .drawer-enter-from, .drawer-leave-to { opacity: 0; }
 .drawer-enter-from .prod-drawer, .drawer-leave-to .prod-drawer { transform: translateX(100%); }
 /* ---------- footer ---------- */
-.prod-footer { max-width: 1240px; margin: 0 auto; padding: 20px 32px 32px; display: flex; align-items: center; justify-content: space-between; color: #9aa3ac; font-size: 12px; }
+.prod-footer { max-width: 1240px; margin: 0 auto; padding: 20px 32px 32px; display: flex; align-items: center; justify-content: space-between; color: var(--text-tertiary); font-size: 12px; }
 .prod-footer-deps { display: inline-flex; align-items: center; gap: 6px; }
-.mono { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
 .spinning { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* ---------- folder-style org sidebar ---------- */
 .prod-fold { display: grid; grid-template-columns: 230px 1fr; gap: 16px; align-items: start; margin-bottom: 16px; }
-.prod-fold-tree { background: #fff; border: 1px solid rgba(0,0,0,0.03); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); overflow: hidden; position: sticky; top: 132px; max-height: calc(100vh - 160px); display: flex; flex-direction: column; }
-.prod-fold-tree-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid #F2F2F7; }
-.prod-fold-tree-title { display: inline-flex; align-items: center; gap: 7px; color: #8E8E93; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
-.prod-fold-tree-clear { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; color: #8E8E93; background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
-.prod-fold-tree-clear:hover:not(:disabled) { background: #F2F2F7; color: #1C1C1E; }
+.prod-fold-tree { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: var(--r-xl); box-shadow: var(--shadow-card); overflow: hidden; position: sticky; top: 132px; max-height: calc(100vh - 160px); display: flex; flex-direction: column; }
+.prod-fold-tree-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border-faint); }
+.prod-fold-tree-title { display: inline-flex; align-items: center; gap: 7px; color: var(--text-tertiary); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+.prod-fold-tree-clear { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; color: var(--text-tertiary); background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
+.prod-fold-tree-clear:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
 .prod-fold-tree-clear:disabled { opacity: .35; cursor: default; }
 .prod-fold-tree-body { overflow-y: auto; padding: 6px; }
-.prod-fold-node { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px 10px; color: #3A3A3C; background: transparent; border: 0; border-radius: 8px; font: inherit; font-size: 13px; text-align: left; cursor: pointer; box-sizing: border-box; transition: background .15s, color .15s; }
-.prod-fold-node:hover { background: #F2F2F7; }
-.prod-fold-node.active { background: #1C1C1E; color: #fff; }
-.prod-fold-node-icon { color: #C7C7CC; flex-shrink: 0; }
-.prod-fold-node.active .prod-fold-node-icon { color: #fff; }
+.prod-fold-node { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px 10px; color: var(--text-secondary); background: transparent; border: 0; border-radius: 8px; font: inherit; font-size: 13px; text-align: left; cursor: pointer; box-sizing: border-box; transition: background .15s, color .15s; }
+.prod-fold-node:hover { background: var(--bg-hover); }
+.prod-fold-node.active { background: var(--btn-primary-bg); color: var(--bg-card); }
+.prod-fold-node-icon { color: var(--text-muted); flex-shrink: 0; }
+.prod-fold-node.active .prod-fold-node-icon { color: var(--bg-card); }
 .prod-fold-node-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prod-fold-node-count { color: #8E8E93; font-size: 11px; font-variant-numeric: tabular-nums; }
-.prod-fold-node.active .prod-fold-node-count { color: rgba(255,255,255,.7); }
-.prod-fold-node-empty { color: #8E8E93; cursor: default; }
-.prod-fold-node:focus-visible { outline: 2px solid #007AFF; outline-offset: 1px; }
-@media (max-width: 900px) { .prod-fold { grid-template-columns: 1fr; } .prod-fold-tree { position: static; max-height: 220px; } }
+.prod-fold-node-count { color: var(--text-tertiary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.prod-fold-node.active .prod-fold-node-count { color: color-mix(in srgb, var(--bg-card) 70%, transparent); }
+.prod-fold-node-empty { color: var(--text-tertiary); cursor: default; }
+.prod-fold-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 900px) { .prod-fold { grid-template-columns: 1fr; } .prod-fold-tree { position: static; max-height: 260px; } }
 /* ---------- reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {
   .sk, .spinning { animation: none; }
@@ -1091,7 +1224,7 @@ onMounted(() => {
   .prod-toolbar-card { gap: 12px; }
   .prod-search { flex-basis: 100%; }
   .prod-table-card { overflow-x: auto; }
-  .prod-thead, .prod-trow { min-width: 960px; }
+  .prod-thead, .prod-trow { min-width: 980px; }
 }
 @media (max-width: 640px) {
   .prod-head-inner { flex-direction: column; align-items: stretch; }
@@ -1099,5 +1232,5 @@ onMounted(() => {
   /* 移动端：操作按钮常显 + 触控目标 ≥44px */
   .prod-act { opacity: 1 !important; width: 44px; height: 44px; }
   .prod-actions { opacity: 1; }
-}  /* ← end of 640px block */
+}
 </style>

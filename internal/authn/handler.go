@@ -50,10 +50,10 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	Token     string       `json:"token"`
-	ExpiresAt string       `json:"expires_at"`
+	Token     string        `json:"token"`
+	ExpiresAt string        `json:"expires_at"`
 	User      identity.User `json:"user"`
-	Roles     []string     `json:"roles"`
+	Roles     []string      `json:"roles"`
 }
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
@@ -142,10 +142,10 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":        user,
-		"roles":       user.Roles,
-		"org_scopes":  user.OrgIDs,
-		"all_orgs":    user.AllOrgs,
+		"user":       user,
+		"roles":      user.Roles,
+		"org_scopes": user.OrgIDs,
+		"all_orgs":   user.AllOrgs,
 	})
 }
 

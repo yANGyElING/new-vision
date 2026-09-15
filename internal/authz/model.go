@@ -2,11 +2,12 @@ package authz
 
 // Permission points (obj, act) used by the node-app HTTP surface.
 const (
-	ObjDevice  = "device"
-	ObjAccess  = "access"
-	ObjTestSIP = "test:sip"
+	ObjDevice   = "device"
+	ObjAccess   = "access"
+	ObjTestSIP  = "test:sip"
 	ObjIdentity = "identity"
-	ObjOrgUnit = "org_unit"
+	ObjOrgUnit  = "org_unit"
+	ObjChannel  = "channel"
 
 	ActCreate     = "create"
 	ActView       = "view"
@@ -30,19 +31,23 @@ var rolePermissions = map[string]map[string][]string{
 		ObjTestSIP:  {ActRegister, ActKeepalive, ActUnregister},
 		ObjIdentity: {ActManage},
 		ObjOrgUnit:  {ActManage},
+		ObjChannel:  {ActView},
 	},
 	"tenant_admin": {
 		ObjDevice:  {ActCreate, ActView, ActUpdate, ActEnable, ActDelete},
 		ObjAccess:  {ActView, ActEvents, ActAck},
 		ObjOrgUnit: {ActManage},
+		ObjChannel: {ActView},
 	},
 	"operator": {
-		ObjDevice: {ActView, ActEnable},
-		ObjAccess: {ActView, ActEvents},
+		ObjDevice:  {ActView, ActEnable},
+		ObjAccess:  {ActView, ActEvents},
+		ObjChannel: {ActView},
 	},
 	"viewer": {
-		ObjDevice: {ActView},
-		ObjAccess: {ActView},
+		ObjDevice:  {ActView},
+		ObjAccess:  {ActView},
+		ObjChannel: {ActView},
 	},
 }
 

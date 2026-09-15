@@ -6,6 +6,7 @@ package access
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -60,15 +61,45 @@ type AccessEventPayload struct {
 	LastSeen      time.Time `json:"last_seen,omitempty"`
 }
 
+// CatalogChannel is one channel entry inside a catalog.result event.
+// Empty Name or Status means "not reported this time"; the consumer keeps
+// the stored value (design D43).
+type CatalogChannel struct {
+	Code   string `json:"code"`
+	Name   string `json:"name,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
+// CatalogProgressPayload is the body of a catalog.progress event: the
+// aggregation state after one Catalog frame (design D50).
+type CatalogProgressPayload struct {
+	SN       int64 `json:"sn"`
+	Received int   `json:"received"`
+	Total    int   `json:"total"`
+}
+
+// CatalogResultPayload is the body of a catalog.result event. A failed sync
+// (ok=false) carries the last received/total so the UI can show "received
+// 26/32 then timed out"; Channels is empty in that case.
+type CatalogResultPayload struct {
+	OK       bool             `json:"ok"`
+	Channels []CatalogChannel `json:"channels"`
+	Error    string           `json:"error,omitempty"`
+	Received int              `json:"received,omitempty"`
+	Total    int              `json:"total,omitempty"`
+}
+
 type AccessEvent struct {
-	EventID          string             `json:"event_id"`
-	Sequence         int64              `json:"sequence"`
-	AccessInstanceID string             `json:"access_instance_id"`
-	SessionEpoch     string             `json:"session_epoch"`
-	Type             string             `json:"type"`
-	OccurredAt       time.Time          `json:"occurred_at"`
-	DeviceAccessID   string             `json:"device_access_id"`
-	Payload          AccessEventPayload `json:"payload"`
+	EventID          string    `json:"event_id"`
+	Sequence         int64     `json:"sequence"`
+	AccessInstanceID string    `json:"access_instance_id"`
+	SessionEpoch     string    `json:"session_epoch"`
+	Type             string    `json:"type"`
+	OccurredAt       time.Time `json:"occurred_at"`
+	DeviceAccessID   string    `json:"device_access_id"`
+	// Payload is kept raw: its shape depends on Type (registration_changed,
+	// catalog.progress, catalog.result) and is decoded by the consumer.
+	Payload json.RawMessage `json:"payload"`
 }
 
 type PollResult struct {

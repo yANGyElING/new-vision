@@ -23,6 +23,12 @@ grep -Fq 'reg_send_reply();' "$cfg"
 grep -Fq 'register_timer(access_timer' "$module"
 grep -Fq 'JSON_REJECT_DUPLICATES' "$module"
 grep -Fq '#define RPC_BODY_MAX (16 * 1024 * 1024)' "$module"
+grep -Fq 'gb28181_handle_message();' "$cfg"
+grep -Fq 'catalog_from_doc' "$module"
+grep -Fq 'emit_access_event("catalog.progress"' "$module"
+grep -Fq 'emit_access_event("catalog.result"' "$module"
+grep -Fq 'KEY_CATALOG_PREFIX' "$module"
+grep -Fq 'EXPIRE' "$module"
 for method in applyDeviceProfile removeDeviceProfile replaceDeviceProfiles getRuntimeSnapshot pollEvents ackEvents; do
     grep -Fq "access.v1.$method" "$module"
 done
